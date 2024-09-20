@@ -6,20 +6,35 @@ class Navigator(QObject):
         super().__init__()
         self.parent = parent
         self.moves = moves
+        self.index = 0
 
     def next(self):
-        pass
+        if self.index < len(self.moves):
+            move = self.moves[self.index]
+            self.index += 1
+            return move
 
     def previous(self):
-        pass
+        if self.index > 0:
+            move = self.moves[self.index]
+            self.index -= 1
+            return move
 
     def restart(self):
-        pass
+        self.index = 0
 
     def undo(self):
         pass
 
     def redo(self):
         pass
+
+    def add_move(self, move_uci: str):
+        self.moves.append(move_uci)
+
     def delete_move(self):
         pass
+
+    def go_to(self, index: int):
+        if index > 0 and index < len(self.moves):
+            return self.moves[index]

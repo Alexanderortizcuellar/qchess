@@ -1,0 +1,43 @@
+from PyQt5 import QtCore
+from PyQt5.QtWidgets import QWidget
+import chess
+from rules import Rules
+
+
+class Classic(QtCore.QObject):
+    moveMade = QtCore.pyqtSignal(str)
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.rules = Rules(self)
+        self.board = chess.Board()
+
+    def check_move(self, src: QWidget, dst: QWidget, promotion="q") -> bool:
+        """
+        checks if a move is legal takes a uci move string
+        """
+        move_uci = src.objectName() + dst.objectName()
+        move = chess.Move.from_uci(move_uci)
+        print(list(self.board.generate_legal_moves()))
+        if self.rules.check_promotion(src, dst):
+            move = chess.Move.from_uci(move_uci + promotion)
+        if self.board.is_legal(move):
+            return True
+        return False
+
+    def check_turn(self):
+        if self.board.turn:
+            return "w"
+        return "b"
+
+    def make_move(self, move_uci: str):
+        try:
+            self.board.push_uci(move_uci)
+            print("made move => " + move_uci)
+            self.moveMade.emit(self.board.fen())
+            return True
+        except Exception:
+            return False
+
+    def reset(self):
+        self.board.reset()

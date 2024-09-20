@@ -37,7 +37,23 @@ pieces = {
     "f2": f"{path}wP.png",
     "g2": f"{path}wP.png",
     "h2": f"{path}wP.png",
-    "empty":""
+    "empty": "",
+}
+
+
+pieces_info = {
+    "P": f"{path}wP.png",
+    "Q": f"{path}wQ.png",
+    "K": f"{path}wK.png",
+    "N": f"{path}wN.png",
+    "R": f"{path}wR.png",
+    "B": f"{path}wB.png",
+    "p": f"{path}bP.png",
+    "q": f"{path}bQ.png",
+    "k": f"{path}bK.png",
+    "n": f"{path}bN.png",
+    "r": f"{path}bR.png",
+    "b": f"{path}bB.png",
 }
 
 
@@ -59,3 +75,33 @@ class Piece(QtCore.QObject):
             return name[1:].upper()
         self.color = "black"
         return name[1:].lower()
+
+
+class Knight(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)
+
+
+class Pawn(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)
+
+
+class Queen(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)
+
+
+class Bishop(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)
+
+
+class Rook(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)
+
+
+class King(Piece):
+    def __init__(self, parent, filename):
+        super().__init__(parent, filename)

@@ -1,6 +1,8 @@
 from PyQt5 import QtGui, QtWidgets, QtCore
+from classic import Classic
 from square import Square
 from pieces import Piece, pieces
+from consts import settings
 
 
 class ChessBoard(QtWidgets.QWidget):
@@ -15,7 +17,7 @@ class ChessBoard(QtWidgets.QWidget):
     onStaleMate = QtCore.pyqtSignal(str, str)
     onDraw = QtCore.pyqtSignal(str, str)
 
-    def __init__(self, parent, size=(800, 800)):
+    def __init__(self, parent, size=(800, 800), settings=settings):
         super().__init__(parent)
         self.setObjectName("chessboard")
         self.boxlayout = QtWidgets.QGridLayout()
@@ -25,6 +27,7 @@ class ChessBoard(QtWidgets.QWidget):
         size = size
         self.resize(*size)
         self.setMaximumSize(*size)
+        self.logic = Classic(self)
         self.init_pieces()
         self.create_board()
 
@@ -38,19 +41,48 @@ class ChessBoard(QtWidgets.QWidget):
             col = square // 8
             color = "beige" if ((row + col) % 2 == 0) else "brown"
             text = f"{letters[col]}{8 - row}"
-            sq = Square(self, color)
+            sq = Square(self, color, self.logic)
             sq.setObjectName(text)
             if pieces.get(text) is not None:
                 piece = self.pieces.get(text)
-                sq.setPixmap(piece.pixmap)
+                sq.label.setPixmap(piece.pixmap)
                 sq.setPiece(piece)
             else:
                 sq.piece = Piece(self, "")
             self.boxlayout.addWidget(sq, row, col)
 
+    def move_glide(self, src_uci, dst_uci):
+        src = self.findChild(QtWidgets.QWidget, src_uci)
+        dst = self.findChild(QtWidgets.QWidget, dst_uci)
+        if self.logic.check_move(src, dst):
+            src.raise_()
+            self.logic.make_move(src, dst)
+            src_style = src.styleSheet()
+            src_pos = src.pos()
+            dst.setObjectName(src_uci)
+            src.setObjectName(dst_uci)
+            src.setStyleSheet("background-color:transparent")
+            src.label.setStyleSheet("background-color:transparent")
+            self.glide = QtCore.QPropertyAnimation(src, b"pos")
+            src.setStyleSheet(dst.styleSheet())
+            self.glide.setDuration(200)
+            self.glide.setEndValue(dst.pos())
+            self.glide.finished.connect(
+                lambda: self.animation_end(dst, src_style, src_pos, src)
+            )
+            self.glide.start()
+
+    def animation_end(self, dst, src_style, src_pos, src):
+        dst.move(src_pos)
+        dst.label.setPixmap(QtGui.QPixmap())
+        src.setStyleSheet(dst.styleSheet())
+        src.label.setStyleSheet(dst.styleSheet())
+        dst.setStyleSheet(src_style)
+        dst.label.setStyleSheet(src_style)
+
     def set_position(self, position):
         self.boardChanged.emit(position)
-    
+
     def check_move(self, src, dst):
         # check if is a valid move
         pass
@@ -59,11 +91,4 @@ class ChessBoard(QtWidgets.QWidget):
         pass
 
     def paintEvent(self, a0: QtGui.QPaintEvent) -> None:
-
         super().paintEvent(a0)
-        painter = QtGui.QPainter(self)
-        pen = QtGui.QPen()
-        pen.setWidth(3)
-        painter.setPen(pen)
-        painter.drawRect(0, 0, self.width(), self.height())
-        painter.end()

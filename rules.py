@@ -42,7 +42,6 @@ class Rules(QObject):
                     [move[0].replace("6", "3"), move[1].replace("5", "4")]
                 )
 
-
         if src.objectName() in mappings.keys() and src.piece.name.lower() == "p":
             for move in mappings[src.objectName()]:
                 if move[0] == dst.objectName():
@@ -56,6 +55,9 @@ class Rules(QObject):
         return False
 
     def check_promotion(self, src, dst):
-        if src.piece.name.lower() == "p" and (dst.objectName()[-1] == "8" or dst.objectName()[-1] == "1"):
+        print(src.piece.name.lower(), dst.objectName()[-1])
+        if src.piece.name.lower() == "p" and (
+            dst.objectName()[-1] == "8" or dst.objectName()[-1] == "1"
+        ):
             return True
         return False
