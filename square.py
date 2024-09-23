@@ -4,6 +4,7 @@ from classic import Classic
 from pieces import Piece
 from dialogs.promotion import PromotionDlg
 
+
 class Square(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget, color: str, logic: Classic):
         super().__init__(parent)
@@ -17,7 +18,7 @@ class Square(QtWidgets.QWidget):
         self.label.setScaledContents(True)
         self.logic = logic
         self.setStyleSheet(
-            f"background-color:{color};color:darkorange;font-weight:bolder;font-size:25px"
+            f"background-color:{color};color:darkorange;font-weight:bolder;font-size:25px;"
         )
 
         # self.setCursor(QtCore.Qt.OpenHandCursor)
@@ -33,6 +34,7 @@ class Square(QtWidgets.QWidget):
             mime_data.setText("Dragging data")
             # Set mime data to drag object
             drag.setMimeData(mime_data)
+
             pixmap_icon = QtGui.QImage(self.label.pixmap()).scaled(
                 self.width(), self.width(), QtCore.Qt.KeepAspectRatio
             )
@@ -60,11 +62,24 @@ class Square(QtWidgets.QWidget):
         if self.logic.rules.check_promotion(src_sq, self):
             self.pmdlg = PromotionDlg(self)
             self.pmdlg.exec()
+
+        if self.logic.rules.check_castle(src_sq, self):
+            squares = self.logic.rules.get_castle_moves(src_sq, self)[1]
+            src_rook = squares[0]
+            dst_rook = squares[1]
+            self.parent.move_glide(src_rook, dst_rook, promotion="q", make_move=False)
+        if self.logic.rules.check_en_passant(src_sq, self):
+            moves = self.logic.rules.get_en_passant_moves(src_sq, self)
+            enpassant = self.parent.findChild(QtWidgets.QWidget, moves[1])
+            enpassant.setPiece(Piece(self, ""))
+            enpassant.label.setPixmap(QtGui.QPixmap())
+
+        self.logic.rules.check_en_passant(src_sq, self)
         self.label.setPixmap(QtGui.QPixmap(src_sq.label.pixmap()))
         self.piece = src_sq.piece
         src_sq.label.setPixmap(QtGui.QPixmap())
         src_sq.setPiece(Piece(self, ""))
-        self.logic.make_move(src_sq.objectName() + self.objectName())
+        self.logic.make_move(src_sq, self)
         self.remove_hover_border()
         event.accept()
 

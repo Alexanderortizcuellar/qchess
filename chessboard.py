@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets, QtGui
 from board import ChessBoard
-from dialogs.promotion import PromotionDlg
+from app.menu import ChessMenu
 import sys
 
 
@@ -9,6 +9,7 @@ class Window(QtWidgets.QMainWindow):
         super().__init__()
         self.setGeometry(100, 100, 600, 600)
         self.setWindowTitle("Chess Board")
+        self.setMenuBar(ChessMenu(self))
         self.setWindowIcon(QtGui.QIcon("images/icons/icon.png"))
         self.boxlayout = QtWidgets.QGridLayout()
         self.box = QtWidgets.QWidget()
@@ -19,21 +20,19 @@ class Window(QtWidgets.QMainWindow):
         self.boxlayout.addWidget(self.board)
         self.btn = QtWidgets.QPushButton(self)
         self.btn.setText("Click me")
-        self.coords = QtWidgets.QLineEdit(self)
-        self.btn.clicked.connect(lambda: self.board.move_glide(*self.coords.text().split(",")))
-        self.fwd = QtWidgets.QPushButton("e2e4")
-        self.fwd.clicked.connect(lambda: self.board.move_glide("e2", "e4"))
-        self.back = QtWidgets.QPushButton("e4e2")
-        self.back.clicked.connect(lambda: self.board.move_glide("e4", "e2"))
-        self.boxlayout.addWidget(self.fwd)
-        self.boxlayout.addWidget(self.back)
+        self.btn.clicked.connect(self.make_castling_move)
         self.boxlayout.addWidget(self.btn)
-        self.boxlayout.addWidget(self.coords)
-    
-        
-    def show_promotion_dialog(self):
-        dlg = PromotionDlg(self)
-        dlg.show()
+
+    def make_castling_move(self):
+        self.board.make_enpassant()
+
+    def about(self):
+        msg = QtWidgets.QMessageBox()
+        msg.setIcon(QtWidgets.QMessageBox.Information)
+        msg.setText("This is an example of a simple message box")
+        msg.setWindowTitle("About")
+        msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg.exec()
 
     def closeEvent(self, event):
         msg = QtWidgets.QMessageBox.question(
