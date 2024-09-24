@@ -1,14 +1,12 @@
 from PyQt5.QtCore import QObject
+from PyQt5 import QtWidgets
 
 
 class Rules(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-    def check_move(self, src, dst):
-        pass
-
-    def check_castle(self, src, dst):
+    def check_castle(self, src: QtWidgets.QWidget, dst: QtWidgets.QWidget):
         mappings = {
             "e1": [["g1", "f1"], ["c1", "d1"]],
             "e8": [["g8", "f8"], ["c8", "d8"]],
@@ -59,7 +57,7 @@ class Rules(QObject):
                 )
         return white_mappings | black_mappings
 
-    def check_en_passant(self, src, dst):
+    def check_en_passant(self, src: QtWidgets.QWidget, dst: QtWidgets.QWidget):
         mappings = self.create_en_passant_moves()
         if src.objectName() in mappings.keys() and src.piece.name.lower() == "p":
             for move in mappings[src.objectName()]:

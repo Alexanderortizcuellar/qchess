@@ -3,6 +3,7 @@ from PyQt5.QtCore import Qt
 from classic import Classic
 from pieces import Piece
 from dialogs.promotion import PromotionDlg
+from pieces import pieces_info
 
 
 class Square(QtWidgets.QWidget):
@@ -20,12 +21,15 @@ class Square(QtWidgets.QWidget):
         self.setStyleSheet(
             f"background-color:{color};color:darkorange;font-weight:bolder;font-size:25px;"
         )
-
+        self.clicked = False
         # self.setCursor(QtCore.Qt.OpenHandCursor)
         self.get_size()
 
     def setPiece(self, piece: Piece):
         self.piece = piece
+    
+    def change_promotion(self, promotion):
+        self.promotion = promotion
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent):
         if (event.buttons() & QtCore.Qt.LeftButton) and (self.piece.name != ""):
@@ -43,12 +47,18 @@ class Square(QtWidgets.QWidget):
             drag.exec(QtCore.Qt.MoveAction)
 
     def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            if self.piece.name != "" and self.clicked is None:
+                self.clicked = self
+            if self.piece.name != "" and self.clicked is not None:
+                pass
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
 
     def dropEvent(self, event: QtGui.QDropEvent):
+        self.promotion = "q"
         src_sq = event.source()
         if (
             src_sq == self
@@ -61,6 +71,7 @@ class Square(QtWidgets.QWidget):
         # self.parent.move_glide(src_sq.objectName(), self.objectName())
         if self.logic.rules.check_promotion(src_sq, self):
             self.pmdlg = PromotionDlg(self)
+            self.pmdlg.pieceSelected.connect(self.change_promotion)
             self.pmdlg.exec()
 
         if self.logic.rules.check_castle(src_sq, self):
@@ -68,20 +79,27 @@ class Square(QtWidgets.QWidget):
             src_rook = squares[0]
             dst_rook = squares[1]
             self.parent.move_glide(src_rook, dst_rook, promotion="q", make_move=False)
+
         if self.logic.rules.check_en_passant(src_sq, self):
             moves = self.logic.rules.get_en_passant_moves(src_sq, self)
             enpassant = self.parent.findChild(QtWidgets.QWidget, moves[1])
             enpassant.setPiece(Piece(self, ""))
             enpassant.label.setPixmap(QtGui.QPixmap())
 
-        self.logic.rules.check_en_passant(src_sq, self)
+        self.logic.make_move(src_sq, self, promotion=self.promotion)
+        if self.logic.rules.check_promotion(src_sq, self):
+            src_sq.label.setPixmap(QtGui.QPixmap(pieces_info[self.promotion]))
+            src_sq.setPiece(Piece(self, pieces_info[self.promotion]))
         self.label.setPixmap(QtGui.QPixmap(src_sq.label.pixmap()))
         self.piece = src_sq.piece
         src_sq.label.setPixmap(QtGui.QPixmap())
         src_sq.setPiece(Piece(self, ""))
-        self.logic.make_move(src_sq, self)
+        # self.logic.make_move(src_sq, self, promotion=self.promotion)  # logic was originally here moved two lines up before changing the board pixmaps
         self.remove_hover_border()
+        print(self.parent.to_fen())
+        print(self.parent.fen_to_board(self.parent.logic.board.fen()))
         event.accept()
+    
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
         if event.source() == self:

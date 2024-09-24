@@ -13,9 +13,11 @@ class Codes:
 
 class ChessClient(QWebSocket):
     connected_signal = pyqtSignal()
-    message_received = pyqtSignal(str)
+    move_received = pyqtSignal(str)
     disconnected_signal = pyqtSignal(bool)
     state_changed = pyqtSignal(str)
+    joined_group = pyqtSignal(str)
+    leave_group = pyqtSignal(str)
 
     def __init__(self, parent):
         super().__init__()
@@ -29,6 +31,10 @@ class ChessClient(QWebSocket):
     def start(self):
         self.open(QUrl("ws://localhost:1234"))
 
+    def join(self):
+        self.joined_group.emit("alex")
+        self.sendTextMessage(Codes.group + "alex")
+
     def handle_connected(self):
         self.sendTextMessage(Codes.update)
 
@@ -40,6 +46,7 @@ class ChessClient(QWebSocket):
         elif state == QAbstractSocket.UnconnectedState:
             print("WebSocket is not connected.")
             self.state_changed.emit("Not connected to server")
+            self.disconnected_signal.emit(True)
         elif state == QAbstractSocket.ConnectingState:
             print("WebSocket is connecting.")
             self.state_changed.emit("Connecting to server")
@@ -55,18 +62,21 @@ class ChessClient(QWebSocket):
             groups = json.loads(message.split(Codes.update)[1])
             if len(groups) > 0:
                 self.sendTextMessage(Codes.group + groups[0])
+            else:
+                self.join()
         elif message.startswith(Codes.message):
-            self.message_received.emit(message.split(Codes.message)[1])
-        print(message)
+            print(f"received move {message}")
+            self.move_received.emit(message.split(Codes.message)[1])
 
     def handle_disconnected(self):
+        self.disconnected_signal.emit(True)
         print("Client disconnected")
 
     def handle_error(self, error: int):
         print("Client error", error)
 
-    def send_message(self, message: str):
-        self.sendTextMessage(message)
+    def send_move(self, move: str):
+        self.sendTextMessage(Codes.message + move)
 
 
 class Window(QtWidgets.QMainWindow):
@@ -89,7 +99,8 @@ class Window(QtWidgets.QMainWindow):
         self.layout.addWidget(self.label)
 
 
-app = QtWidgets.QApplication([])
-window = Window()
-window.show()
-app.exec()
+if __name__ == "__main__":
+    app = QtWidgets.QApplication([])
+    window = Window()
+    window.show()
+    app.exec()

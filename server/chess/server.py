@@ -42,7 +42,7 @@ class ChessServer(QWebSocketServer):
     def handle_text_message(self, message: str):
         client = self.sender()
         if message.startswith("(:GRP:)"):
-            print(":GRP: message received")
+            print(":GRP: message received", message)
             self.clients[client]["group"] = str(message.split("(:GRP:)")[1])
             return
         if message.startswith("(:UPDATE:)"):
@@ -51,7 +51,7 @@ class ChessServer(QWebSocketServer):
             client.sendTextMessage(Codes.update + json.dumps(avilable_groups))
             return
         if message.startswith("(:MSG:)"):
-            print(":MSG: message received")
+            print(f":MSG: message received {message}")
             for client_local in self.clients.keys():
                 if (
                     self.clients[client_local]["group"] == self.clients[client]["group"]
