@@ -18,6 +18,7 @@ class Rules(QObject):
                         return True
                 return False
         return False
+    
 
     def get_castle_moves(self, src, dst):
         mappings = {

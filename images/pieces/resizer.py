@@ -21,7 +21,7 @@ def save(image: Image, name: str, output_folder: str):
     image.save(name, quality=80)
 
 def main():
-    resize_images("images/pieces/2048/*.png", 32, "images/pieces/64")
+    resize_images("images/pieces/2048/*.png", 16, "images/pieces/128")
 
 
 if __name__ == "__main__":

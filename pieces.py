@@ -2,7 +2,7 @@ from PyQt5 import QtGui, QtCore
 from pathlib import Path
 
 
-path = "images/pieces/2048/"
+path = "images/pieces/1024/"
 
 pieces = {
     "a8": f"{path}bR.png",

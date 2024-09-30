@@ -1,7 +1,7 @@
 from PyQt5.QtNetwork import QAbstractSocket
 from PyQt5.QtCore import QObject, QUrl, pyqtSignal, QJsonDocument
 from PyQt5.QtWebSockets import QWebSocket
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtCore
 import json
 
 
@@ -19,9 +19,11 @@ class ChessClient(QWebSocket):
     joined_group = pyqtSignal(str)
     leave_group = pyqtSignal(str)
 
-    def __init__(self, parent):
+    def __init__(self, parent, url):
         super().__init__()
         self.parent = parent
+        self.url = url
+        self.generator = QtCore.QUuid()
         self.connected.connect(self.handle_connected)
         self.textMessageReceived.connect(self.handle_text_message)
         self.stateChanged.connect(self.handle_state_changed)
@@ -29,9 +31,10 @@ class ChessClient(QWebSocket):
         self.error.connect(self.handle_error)
 
     def start(self):
-        self.open(QUrl("ws://localhost:1234"))
+        self.open(QUrl(self.url))
 
     def join(self):
+
         self.joined_group.emit("alex")
         self.sendTextMessage(Codes.group + "alex")
 
@@ -77,6 +80,9 @@ class ChessClient(QWebSocket):
 
     def send_move(self, move: str):
         self.sendTextMessage(Codes.message + move)
+
+    def _create_group_name(self):
+        return self.generator.createUuid().toString()
 
 
 class Window(QtWidgets.QMainWindow):

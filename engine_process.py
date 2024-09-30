@@ -43,10 +43,7 @@ class ChessEngine(QMainWindow):
 
     def readOutput(self):
         output = self.process.readAllStandardOutput().data().decode()
-        pattern = QRegularExpression(r"(bestmove\s+)(\w+)")
-        result = pattern.match(output)
-        if result.hasMatch():
-            self.textEdit.setText(result.captured(2))
+        self.textEdit.append(output)
 
 
     def closeEvent(self, event):
