@@ -70,7 +70,3 @@ python main.py
 - **GUI Framework**: [PyQt5](https://www.riverbankcomputing.com/software/pyqt/)
 - **Chess Logic**: [chess](https://github.com/niklasf/python-chess)
 - **Graphics**: SVG via `QtSvg`
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
