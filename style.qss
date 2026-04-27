@@ -6,6 +6,31 @@ QWidget {
     font-size: 14px;
 }
 
+QWidget#chessboard_editor {
+    background: #232629;
+
+}
+
+QWidget#chessboard_editor QLabel {
+    background: #232629;
+    border-radius:0px;
+    border:none;
+}
+
+QWidget#chessboard_editor QPushButton {
+    background: #303132;
+    border-radius:0px;
+    border:none;
+    padding:0px 0px;
+    min-width: 60px;
+    min-height: 60px;
+}
+
+QWidget#chessboard_editor QPushButton:checked {
+    background:#2d5e27;
+}
+
+
 /* --- Main Window & Dialog --- */
 QMainWindow, QDialog {
     background: #232629;

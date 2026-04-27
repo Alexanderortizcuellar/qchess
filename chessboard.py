@@ -92,7 +92,7 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
                     uci = self.last_click + this_click
                     self.apply_move(uci + self.get_promotion(uci))
             self.last_click = this_click
-
+    
     def mouseMoveEvent(self, a0):
         try:
             current_square = chess.parse_square(self.get_clicked(a0.pos()))
@@ -132,7 +132,7 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
 
     def dragMoveEvent(self, a0):
         if not self.check_area_clicked(a0.pos()):
-            QtGui.QCursor.setPos(self.mapToGlobal(self._drag_start_pos))
+            # QtGui.QCursor.setPos(self.mapToGlobal(self._drag_start_pos))
             print("not in a square when dragging")
             a0.ignore()
         else:

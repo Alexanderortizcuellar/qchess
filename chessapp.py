@@ -14,6 +14,9 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QToolBar,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
 )
 
 from analysis_widget import AnalysisWidget
@@ -24,7 +27,7 @@ from movemanager import MoveManager
 from pgn_browser import PGNBrowser
 from variations_dlg import VariationsDialog
 from useful_methods import _create_action, _create_iconed_button, _slot_or_noop
-
+from board_editor import BoardEditorDlg
 
 text = """[Event "?"]
 [Site "?"]
@@ -44,7 +47,6 @@ class ChessApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chess App")
-
         # Create a central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -52,23 +54,32 @@ class ChessApp(QMainWindow):
         self.addToolBar(self.toolbar)
         # Create a vertical layout
         layout = QHBoxLayout()
-
+        left_layout = QVBoxLayout()
         central_widget.setLayout(layout)
         self.move_manager = MoveManager()
-        chess_bar = QWidget()
-        chess_bar_layout = QHBoxLayout()
-        chess_bar.setLayout(chess_bar_layout)
-        chess_bar_layout.setContentsMargins(0, 0, 0, 0)
+        # Create a horizontal layout
+        board_bar_container = QWidget()
+        board_bar_layout = QHBoxLayout()
+        board_bar_container.setLayout(board_bar_layout)
+        board_bar_layout.setContentsMargins(0, 0, 0, 0)
         self.bar = EvalBar()
         self.bar.hide()
         self.chessboard = ChessBoard(self, chess.Board().fen(), size=750)
-        chess_bar_layout.addWidget(self.bar)
-        chess_bar_layout.addWidget(self.chessboard)
-        chess_bar.setFixedSize(
+        board_bar_layout.addWidget(self.bar)
+        board_bar_layout.addWidget(self.chessboard)
+        board_bar_container.setFixedSize(
             self.chessboard.width() + self.bar.width(), self.chessboard.height()
         )
         self.bar.setFixedHeight(self.chessboard.height() - 20)
-        layout.addWidget(chess_bar)
+        left_layout.addWidget(board_bar_container)
+        layout.addLayout(left_layout)
+        fen_row = QHBoxLayout()
+        fen_label = QLabel("FEN:")
+        self.fen_edit = QLineEdit()
+        self.fen_edit.setReadOnly(True)
+        fen_row.addWidget(fen_label)
+        fen_row.addWidget(self.fen_edit)
+        left_layout.addLayout(fen_row)
         pgn_area_layout = QVBoxLayout()
         layout.addLayout(pgn_area_layout)
         self.analysis_widget = AnalysisWidget(self)
@@ -95,9 +106,11 @@ class ChessApp(QMainWindow):
         self.navigation_layout.addWidget(self.jump_to_end_button)
         self.navigation_layout.addWidget(flip_button)
         actions_layout = QHBoxLayout()
+        load_fen_btn = _create_iconed_button("fa6s.gear", "Ctrl+l", "Load FEN")
         save_pgn_btn = _create_iconed_button("fa5s.save", "Ctrl+s", "Save Pgn")
         copy_pgn_btn = _create_iconed_button("fa5s.copy", "Ctrl+c", "Copy Pgn")
         clear_btn = _create_iconed_button("fa5s.trash", "Ctrl+d", "Clear Pgn")
+        actions_layout.addWidget(load_fen_btn)
         actions_layout.addWidget(save_pgn_btn)
         actions_layout.addWidget(copy_pgn_btn)
         actions_layout.addWidget(clear_btn)
@@ -111,6 +124,7 @@ class ChessApp(QMainWindow):
         self.display_pgn()
         # Connect signals
         self.chessboard.moveMade.connect(self.handle_move)
+        self.chessboard.fenChanged.connect(self.fen_edit.setText)
         self.analysis_widget.check_analysis.toggled.connect(self.toggle_analysis)
         self.chessboard.GameOver.connect(self.on_game_over)
         self.forward_button.clicked.connect(self.forward)
@@ -118,6 +132,7 @@ class ChessApp(QMainWindow):
         self.jump_to_start_button.clicked.connect(self.jump_to_start)
         self.jump_to_end_button.clicked.connect(self.jump_to_end)
         flip_button.clicked.connect(self.flip_board)
+        load_fen_btn.clicked.connect(self.load_fen)
         save_pgn_btn.clicked.connect(self.save_pgn)
         clear_btn.clicked.connect(self.clear_pgn)
         copy_pgn_btn.clicked.connect(
@@ -186,6 +201,16 @@ class ChessApp(QMainWindow):
         self.move_manager.clear()
         self.display_pgn()
         self.chessboard.update_board(self.move_manager.get_board().fen())
+
+    def load_fen(self):
+        fen, ok = QInputDialog.getText(self, "Load FEN", "Enter FEN:")
+        if ok:
+            self.move_manager.load_fen(fen)
+            self.display_pgn()
+            self.chessboard.update_board(fen)
+        else:
+            dlg = BoardEditorDlg(self)
+            dlg.exec_()
 
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())
@@ -337,7 +362,6 @@ class ChessApp(QMainWindow):
     def copy_text(self, text: str):
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
-
 
     def closeEvent(self, a0):
         msg = QMessageBox.question(
