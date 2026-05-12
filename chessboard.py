@@ -72,6 +72,8 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
         self.side = chess.WHITE
         self.last_click = None
         self.last_move = None
+        self._drag_start_pos = None
+        self.dragging = False
         self.animated_piece = QtSvg.QSvgWidget(self)
         self.animated_piece.setGeometry(
             0, 0, int(self.square_size), int(self.square_size)
@@ -92,7 +94,7 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
                     uci = self.last_click + this_click
                     self.apply_move(uci + self.get_promotion(uci))
             self.last_click = this_click
-    
+
     def mouseMoveEvent(self, a0):
         try:
             current_square = chess.parse_square(self.get_clicked(a0.pos()))
@@ -124,6 +126,7 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
                     drag.setHotSpot(pixmap_icon.rect().center())
                     # drag.setDragCursor(self.create_transparent_cursor(), Qt.MoveAction)
                     legal_moves = self.get_legal_moves(current_square)
+                    self.dragging = True
                     self.set_piece_at(current_square, None)
                     self.draw_board(legal_moves=legal_moves)
                     drag.exec(Qt.MoveAction)
@@ -147,6 +150,7 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
         a0.ignore()
 
     def dropEvent(self, a0):
+        self.dragging = False
         current = self.get_clicked(a0.pos())
         # piece = a0.mimeData().text().split(",")[1]
         fen = a0.mimeData().text().split(",")[-1]

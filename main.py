@@ -22,7 +22,7 @@ def main():
     # load stylesheet
     style = load_stylesheet("style.qss")
     app.setStyleSheet(style)
-    # import modules
+    # import modules 
     from chessapp import ChessApp
 
     splash.finish(None)  # close splash

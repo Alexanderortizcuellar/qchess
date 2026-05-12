@@ -16,7 +16,7 @@ class ChessEngine(QtCore.QProcess):
         self.setProcessChannelMode(QtCore.QProcess.MergedChannels)
         self.setProgram(self.engine_path)
         self.readyReadStandardOutput.connect(self.read_data)
-        self.stateChanged.connect(self.on_state_changed)
+        # self.stateChanged.connect(self.on_state_changed)
 
     def read_data(self):
         data = self.readAllStandardOutput().data().decode()

@@ -28,6 +28,7 @@ from pgn_browser import PGNBrowser
 from variations_dlg import VariationsDialog
 from useful_methods import _create_action, _create_iconed_button, _slot_or_noop
 from board_editor import BoardEditorDlg
+from opening_explorer import OpeningExplorerLogic
 
 text = """[Event "?"]
 [Site "?"]
@@ -85,7 +86,7 @@ class ChessApp(QMainWindow):
         self.analysis_widget = AnalysisWidget(self)
         self.analysis_widget.setFixedHeight(100)
         self.browser = PGNBrowser(self, self.move_manager)
-
+        self.opxl = OpeningExplorerLogic(self)
         self.navigation_layout = QHBoxLayout()
         self.jump_to_start_button = _create_iconed_button(
             "ph.caret-double-left-fill", "Home"
@@ -116,6 +117,7 @@ class ChessApp(QMainWindow):
         actions_layout.addWidget(clear_btn)
         pgn_area_layout.addWidget(self.analysis_widget)
         pgn_area_layout.addWidget(self.browser)
+        pgn_area_layout.addWidget(self.opxl)
         pgn_area_layout.addLayout(self.navigation_layout)
         pgn_area_layout.addLayout(actions_layout)
 
@@ -141,6 +143,8 @@ class ChessApp(QMainWindow):
         self.move_manager.pgnChanged.connect(lambda _: self.display_pgn())
         self.browser.anchorClicked.connect(self.on_anchor_clicked)
         self.chessboard.fenChanged.connect(self.send_position)
+        self.chessboard.fenChanged.connect(self.send_fen_to_opxl)
+        self.opxl.errorOcurred.connect(self.statusBar().showMessage)
         self.engine.cpScoreFound.connect(self.get_score)
         self.engine.depthChanged.connect(
             lambda depth: self.analysis_widget.set_depth(f"depth={depth}")
@@ -183,10 +187,41 @@ class ChessApp(QMainWindow):
             status_tip="Quit the application",
             tool_tip="Quit the application",
         )
+        view_menu = self.menuBar().addMenu("&View")
+        dark_action = _create_action(
+            self,
+            "Dark",
+            _slot_or_noop(self, "set_style"),
+            "Ctrl+D",
+            status_tip="Set HTML style to dark",
+            tool_tip="Set HTML style to dark",
+        )
+        light_action = _create_action(
+            self,
+            "Light",
+            _slot_or_noop(self, "set_style"),
+            "Ctrl+L",
+            status_tip="Set HTML style to light",
+            tool_tip="Set HTML style to light",
+        )
+        moves_explorer_action = _create_action(
+            self,
+            "Moves Explorer",
+            _slot_or_noop(self, "enable_moves_explorer"),
+            "Ctrl+M",
+            status_tip="Open moves explorer",
+            tool_tip="Open moves explorer",
+            checkable=True,
+            checked=True,
+        )
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
+        view_menu.addAction(dark_action)
+        view_menu.addAction(light_action)
+        view_menu.addSeparator()
+        view_menu.addAction(moves_explorer_action)
         self.init_toolbar([open_action, save_action])
 
     def init_toolbar(self, actions: list):
@@ -239,6 +274,12 @@ class ChessApp(QMainWindow):
             self.engine.send_command("stop")
             self.bar.hide()
 
+    def enable_moves_explorer(self, toggle: bool):
+        if toggle:
+            self.opxl.setVisible(True)
+        else:
+            self.opxl.setVisible(False)
+
     def forward(self):
         """Go forward in the move variations."""
         if self.move_manager.has_variations():
@@ -288,6 +329,10 @@ class ChessApp(QMainWindow):
     def on_game_over(self):
         self.engine.send_command("stop")
 
+    def send_fen_to_opxl(self, fen: str):
+        if self.opxl.isVisible():
+            self.opxl.send_fen(fen)
+
     def send_position(self):
         if self.analysis_widget.check_analysis.isChecked():
             self.engine.send_command("stop")
@@ -300,13 +345,15 @@ class ChessApp(QMainWindow):
         return int((score + 10) / 20 * 1000)
 
     def on_lines_found(self, lines: list[str]):
+        if self.chessboard.dragging:
+            return
         board = chess.Board(self.chessboard.fen())
         if len(lines) >= 1:
             move1_uci = lines[0]
             move1 = chess.Move.from_uci(move1_uci)
             if move1 not in board.legal_moves:
                 return
-        header = f'[FEN "{self.chessboard.fen()}"]\n\n'
+        header = f'[FEN "{board.fen()}"]\n\n'
         pgn = header + " ".join(lines)
         move1_uci = lines[0]
         move1 = chess.Move.from_uci(move1_uci)

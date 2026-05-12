@@ -14,7 +14,7 @@ def _qicon(name: str, color="#a9aea7"):
     return qta.icon(name, color=color)
 
 
-def _slot_or_noop(obj, method_name):
+def _slot_or_noop(obj, method_name, *args, **kwargs):
     """Return a callable for QAction.triggered.connect. If missing, it's a no-op."""
     return getattr(obj, method_name, lambda *args, **kwargs: None)
 
