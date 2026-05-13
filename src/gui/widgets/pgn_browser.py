@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
 )
 
-from movemanager import MoveManager
+from core.move_manager import MoveManager
 
 
 class CommentDialog(QDialog):
@@ -52,10 +52,10 @@ class PGNBrowser(QTextBrowser):
         menu = QMenu(self)
 
         actions = [
-            ("Promote to Main..", callable),
+            ("Promote to Main..", self.on_promote_to_main),
             ("Promote..", self.on_promote),
-            ("Demote..", callable),
-            ("Delete from here..", callable),
+            ("Demote..", self.on_demote),
+            ("Delete from here..", self.on_delete),
             ("Add Comment..", self.on_add_comment),
         ]
 
@@ -75,14 +75,25 @@ class PGNBrowser(QTextBrowser):
                 return
             self.movemanager.add_comment(node_index, dlg.comment)
 
-    def on_promote(self, anchor):
-        pass
+    def on_promote_to_main(self, anchor):
+        node_index = self.match_node(anchor)
+        if node_index is not None:
+            self.movemanager.promote_to_main(node_index)
 
-    def demote(self, anchor):
-        pass
+    def on_promote(self, anchor):
+        node_index = self.match_node(anchor)
+        if node_index is not None:
+            self.movemanager.promote(node_index)
+
+    def on_demote(self, anchor):
+        node_index = self.match_node(anchor)
+        if node_index is not None:
+            self.movemanager.demote(node_index)
 
     def on_delete(self, anchor):
-        pass
+        node_index = self.match_node(anchor)
+        if node_index is not None:
+            self.movemanager.delete_from_here(node_index)
 
     def match_node(self, anchor: str) -> int | None:
         match = re.match(r"move\((\d+)\)", anchor)

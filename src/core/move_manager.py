@@ -4,7 +4,7 @@ import chess
 import chess.pgn
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from pgn_to_html import pgn_to_html
+from core.pgn_to_html import pgn_to_html
 
 
 class MoveManager(QObject):
@@ -109,6 +109,46 @@ class MoveManager(QObject):
         node = self.get_node_by_index(index)
         node.comment = comment
         self.create_mapping()
+
+    def promote_to_main(self, index: int):
+        node = self.get_node_by_index(index)
+        parent = node.parent
+        if parent:
+            parent.promote_to_main(node)
+            self.create_mapping()
+
+    def promote(self, index: int):
+        node = self.get_node_by_index(index)
+        parent = node.parent
+        if parent:
+            parent.promote(node)
+            self.create_mapping()
+
+    def demote(self, index: int):
+        node = self.get_node_by_index(index)
+        parent = node.parent
+        if parent:
+            parent.demote(node)
+            self.create_mapping()
+
+    def delete_from_here(self, index: int):
+        node = self.get_node_by_index(index)
+        parent = node.parent
+        if parent:
+            parent.remove_variation(node)
+            # If we deleted the current node or one of its parents, jump to the parent
+            temp = self.current_node
+            is_parent = False
+            while temp:
+                if temp == node:
+                    is_parent = True
+                    break
+                temp = temp.parent
+            
+            if is_parent:
+                self.current_node = parent
+                
+            self.create_mapping()
 
     def change_html_style(self, html_style=False):
         self.html_style = html_style

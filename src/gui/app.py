@@ -3,7 +3,7 @@ import sys
 from io import StringIO
 
 import chess.pgn
-from PyQt5.QtCore import QUrl
+from PyQt5.QtCore import QUrl, Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -17,18 +17,19 @@ from PyQt5.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QDockWidget,
 )
 
-from analysis_widget import AnalysisWidget
-from bar import EvalBar
-from chessboard import ChessBoard
-from engine import ChessEngine
-from movemanager import MoveManager
-from pgn_browser import PGNBrowser
-from variations_dlg import VariationsDialog
-from useful_methods import _create_action, _create_iconed_button, _slot_or_noop
-from board_editor import BoardEditorDlg
-from opening_explorer import OpeningExplorerLogic
+from gui.widgets.analysis_widget import AnalysisWidget
+from gui.widgets.eval_bar import EvalBar
+from gui.widgets.chessboard import ChessBoard
+from core.engine import ChessEngine
+from core.move_manager import MoveManager
+from gui.widgets.pgn_browser import PGNBrowser
+from gui.dialogs.variations_dlg import VariationsDialog
+from utils.helpers import _create_action, _create_iconed_button
+from gui.dialogs.board_editor import BoardEditorDlg
+from core.opening_explorer import OpeningExplorerLogic
 
 text = """[Event "?"]
 [Site "?"]
@@ -48,83 +49,142 @@ class ChessApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chess App")
-        # Create a central widget
+        self.move_manager = MoveManager()
+        self.engine = ChessEngine("stockfish", self)
+
+        # --- Central Widget (Board Area) ---
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        self.toolbar = QToolBar()
-        self.addToolBar(self.toolbar)
-        # Create a vertical layout
-        layout = QHBoxLayout()
-        left_layout = QVBoxLayout()
-        central_widget.setLayout(layout)
-        self.move_manager = MoveManager()
-        # Create a horizontal layout
+        central_layout = QVBoxLayout(central_widget)
+        central_layout.addStretch()
+
+        # Board and FEN group
+        board_group = QWidget()
+        board_group_layout = QVBoxLayout(board_group)
+        board_group_layout.setContentsMargins(0, 0, 0, 0)
+        board_group_layout.setSpacing(10)
+
         board_bar_container = QWidget()
-        board_bar_layout = QHBoxLayout()
-        board_bar_container.setLayout(board_bar_layout)
+        board_bar_layout = QHBoxLayout(board_bar_container)
         board_bar_layout.setContentsMargins(0, 0, 0, 0)
+        board_bar_layout.setSpacing(10)
+        
         self.bar = EvalBar()
         self.bar.hide()
         self.chessboard = ChessBoard(self, chess.Board().fen(), size=750)
+        
         board_bar_layout.addWidget(self.bar)
         board_bar_layout.addWidget(self.chessboard)
-        board_bar_container.setFixedSize(
-            self.chessboard.width() + self.bar.width(), self.chessboard.height()
-        )
+        
+        # We don't necessarily need a fixed size if the layout handles it, 
+        # but let's keep it consistent with the board row for now if needed.
+        # Actually, removing fixed size might help with centering when bar is hidden.
+        # board_bar_container.setFixedSize(
+        #     self.chessboard.width() + self.bar.width() + 10, self.chessboard.height()
+        # )
         self.bar.setFixedHeight(self.chessboard.height() - 20)
-        left_layout.addWidget(board_bar_container)
-        layout.addLayout(left_layout)
-        fen_row = QHBoxLayout()
-        fen_label = QLabel("FEN:")
+        board_group_layout.addWidget(board_bar_container)
+
+        self.fen_row = QHBoxLayout()
+        self.fen_row.setContentsMargins(0, 0, 0, 0)
+        self.fen_row.setSpacing(10)
+        
+        self.fen_label = QLabel("FEN:")
+        self.fen_label.setFixedWidth(self.bar.width())
+        self.fen_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        
         self.fen_edit = QLineEdit()
         self.fen_edit.setReadOnly(True)
-        fen_row.addWidget(fen_label)
-        fen_row.addWidget(self.fen_edit)
-        left_layout.addLayout(fen_row)
-        pgn_area_layout = QVBoxLayout()
-        layout.addLayout(pgn_area_layout)
+        # Ensure FEN edit matches the board width
+        self.fen_edit.setFixedWidth(self.chessboard.width())
+        
+        self.fen_row.addWidget(self.fen_label)
+        self.fen_row.addWidget(self.fen_edit)
+        board_group_layout.addLayout(self.fen_row)
+        
+        # Sync visibility with eval bar
+        self.fen_label.setVisible(self.bar.isVisible())
+
+        central_layout.addWidget(board_group, alignment=Qt.AlignCenter)
+        central_layout.addStretch()
+
+        # --- Docks ---
+        self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks)
+
+        # 1. Analysis Dock (Top Right)
         self.analysis_widget = AnalysisWidget(self)
-        self.analysis_widget.setFixedHeight(100)
+        self.analysis_dock = QDockWidget("Engine Analysis", self)
+        self.analysis_dock.setWidget(self.analysis_widget)
+        self.analysis_dock.setObjectName("analysis_dock")
+        self.addDockWidget(Qt.RightDockWidgetArea, self.analysis_dock)
+
+        # 2. PGN & Navigation Dock (Under Analysis)
         self.browser = PGNBrowser(self, self.move_manager)
-        self.opxl = OpeningExplorerLogic(self)
         self.navigation_layout = QHBoxLayout()
-        self.jump_to_start_button = _create_iconed_button(
-            "ph.caret-double-left-fill", "Home"
-        )
-        self.backward_button = _create_iconed_button(
-            "mdi.skip-previous", "Left", "Navigate back"
-        )
-        self.forward_button = _create_iconed_button(
-            "mdi.skip-next", "Right", "Navigate forward"
-        )
-        self.jump_to_end_button = _create_iconed_button(
-            "mdi.skip-next", "End", "Navigate to end"
-        )
+        self.jump_to_start_button = _create_iconed_button("ph.caret-double-left-fill", "Home")
+        self.backward_button = _create_iconed_button("mdi.skip-previous", "Left", "Navigate back")
+        self.forward_button = _create_iconed_button("mdi.skip-next", "Right", "Navigate forward")
+        self.jump_to_end_button = _create_iconed_button("mdi.skip-next", "End", "Navigate to end")
         flip_button = _create_iconed_button("ei.refresh", "Ctrl+f", "Flip board")
-        self.navigation_layout.addWidget(self.jump_to_start_button)
-        self.navigation_layout.addWidget(self.backward_button)
-        self.navigation_layout.addWidget(self.forward_button)
-        self.navigation_layout.addWidget(self.jump_to_end_button)
-        self.navigation_layout.addWidget(flip_button)
+        for btn in [self.jump_to_start_button, self.backward_button, self.forward_button, self.jump_to_end_button, flip_button]:
+            self.navigation_layout.addWidget(btn)
+
         actions_layout = QHBoxLayout()
         load_fen_btn = _create_iconed_button("fa6s.gear", "Ctrl+l", "Load FEN")
         save_pgn_btn = _create_iconed_button("fa5s.save", "Ctrl+s", "Save Pgn")
         copy_pgn_btn = _create_iconed_button("fa5s.copy", "Ctrl+c", "Copy Pgn")
         clear_btn = _create_iconed_button("fa5s.trash", "Ctrl+d", "Clear Pgn")
-        actions_layout.addWidget(load_fen_btn)
-        actions_layout.addWidget(save_pgn_btn)
-        actions_layout.addWidget(copy_pgn_btn)
-        actions_layout.addWidget(clear_btn)
-        pgn_area_layout.addWidget(self.analysis_widget)
-        pgn_area_layout.addWidget(self.browser)
-        pgn_area_layout.addWidget(self.opxl)
-        pgn_area_layout.addLayout(self.navigation_layout)
-        pgn_area_layout.addLayout(actions_layout)
+        for btn in [load_fen_btn, save_pgn_btn, copy_pgn_btn, clear_btn]:
+            actions_layout.addWidget(btn)
 
-        self.engine = ChessEngine("stockfish", self)
+        pgn_container = QWidget()
+        pgn_dock_layout = QVBoxLayout(pgn_container)
+        pgn_dock_layout.setContentsMargins(4, 4, 4, 4)
+        pgn_dock_layout.setSpacing(4)
+        pgn_dock_layout.addWidget(self.browser)
+        
+        # Navigation buttons container
+        nav_widget = QWidget()
+        nav_widget_layout = QHBoxLayout(nav_widget)
+        nav_widget_layout.setContentsMargins(0, 0, 0, 0)
+        nav_widget_layout.setSpacing(2)
+        for btn in [self.jump_to_start_button, self.backward_button, self.forward_button, self.jump_to_end_button, flip_button]:
+            nav_widget_layout.addWidget(btn)
+        pgn_dock_layout.addWidget(nav_widget)
+
+        # Actions buttons container
+        actions_widget = QWidget()
+        actions_widget_layout = QHBoxLayout(actions_widget)
+        actions_widget_layout.setContentsMargins(0, 0, 0, 0)
+        actions_widget_layout.setSpacing(2)
+        for btn in [load_fen_btn, save_pgn_btn, copy_pgn_btn, clear_btn]:
+            actions_widget_layout.addWidget(btn)
+        pgn_dock_layout.addWidget(actions_widget)
+
+        self.pgn_dock = QDockWidget("PGN Browser", self)
+        self.pgn_dock.setWidget(pgn_container)
+        self.pgn_dock.setObjectName("pgn_dock")
+        self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
+
+        # 3. Opening Explorer Dock (Under PGN)
+        self.opxl = OpeningExplorerLogic(self)
+        self.explorer_dock = QDockWidget("Opening Explorer", self)
+        self.explorer_dock.setWidget(self.opxl)
+        self.explorer_dock.setObjectName("explorer_dock")
+        self.addDockWidget(Qt.RightDockWidgetArea, self.explorer_dock)
+        self.explorer_dock.hide()  # Hidden by default
+
+        # Arrange docks vertically on the right
+        self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
+        self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
+
+        # --- Toolbar & Menubar ---
+        self.toolbar = QToolBar()
+        self.addToolBar(self.toolbar)
         self.init_menubar()
         self.display_pgn()
-        # Connect signals
+
+        # --- Signals ---
         self.chessboard.moveMade.connect(self.handle_move)
         self.chessboard.fenChanged.connect(self.fen_edit.setText)
         self.analysis_widget.check_analysis.toggled.connect(self.toggle_analysis)
@@ -137,22 +197,16 @@ class ChessApp(QMainWindow):
         load_fen_btn.clicked.connect(self.load_fen)
         save_pgn_btn.clicked.connect(self.save_pgn)
         clear_btn.clicked.connect(self.clear_pgn)
-        copy_pgn_btn.clicked.connect(
-            lambda _: self.copy_text(self.move_manager.get_pgn())
-        )
+        copy_pgn_btn.clicked.connect(lambda _: self.copy_text(self.move_manager.get_pgn()))
         self.move_manager.pgnChanged.connect(lambda _: self.display_pgn())
         self.browser.anchorClicked.connect(self.on_anchor_clicked)
         self.chessboard.fenChanged.connect(self.send_position)
         self.chessboard.fenChanged.connect(self.send_fen_to_opxl)
         self.opxl.errorOcurred.connect(self.statusBar().showMessage)
         self.engine.cpScoreFound.connect(self.get_score)
-        self.engine.depthChanged.connect(
-            lambda depth: self.analysis_widget.set_depth(f"depth={depth}")
-        )
+        self.engine.depthChanged.connect(lambda depth: self.analysis_widget.set_depth(f"depth={depth}"))
         self.engine.lineFound.connect(self.on_lines_found)
         self.engine.mateFound.connect(self.get_mate)
-        # self.engine.start()
-        # self.engine.set_threads(5)
 
     def set_html_style(self, html_style: bool):
         """Set the HTML style to either light or dark. (True for dark, False for light)"""
@@ -163,7 +217,7 @@ class ChessApp(QMainWindow):
         open_action = _create_action(
             self,
             "Open",
-            _slot_or_noop(self, "open_pgn"),
+            self.open_pgn,
             "Ctrl+O",
             icon_name="fa5s.folder-open",
             status_tip="Open a pgn file",
@@ -172,7 +226,7 @@ class ChessApp(QMainWindow):
         save_action = _create_action(
             self,
             "Save",
-            _slot_or_noop(self, "save_pgn"),
+            self.save_pgn,
             "Ctrl+S",
             icon_name="fa5s.save",
             status_tip="Save a pgn file",
@@ -181,7 +235,7 @@ class ChessApp(QMainWindow):
         quit_action = _create_action(
             self,
             "Quit",
-            _slot_or_noop(self, "close"),
+            self.close,
             "Ctrl+Q",
             icon_name="fa5s.times-circle",
             status_tip="Quit the application",
@@ -191,7 +245,7 @@ class ChessApp(QMainWindow):
         dark_action = _create_action(
             self,
             "Dark",
-            _slot_or_noop(self, "set_style"),
+            lambda: self.set_style("dark"),
             "Ctrl+D",
             status_tip="Set HTML style to dark",
             tool_tip="Set HTML style to dark",
@@ -199,30 +253,68 @@ class ChessApp(QMainWindow):
         light_action = _create_action(
             self,
             "Light",
-            _slot_or_noop(self, "set_style"),
+            lambda: self.set_style("light"),
             "Ctrl+L",
             status_tip="Set HTML style to light",
             tool_tip="Set HTML style to light",
         )
-        moves_explorer_action = _create_action(
-            self,
-            "Moves Explorer",
-            _slot_or_noop(self, "enable_moves_explorer"),
-            "Ctrl+M",
-            status_tip="Open moves explorer",
-            tool_tip="Open moves explorer",
-            checkable=True,
-            checked=True,
-        )
+        
+        docks_menu = view_menu.addMenu("&Docks")
+        docks_menu.addAction(self.pgn_dock.toggleViewAction())
+        docks_menu.addAction(self.analysis_dock.toggleViewAction())
+        docks_menu.addAction(self.explorer_dock.toggleViewAction())
+
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
         view_menu.addAction(dark_action)
         view_menu.addAction(light_action)
-        view_menu.addSeparator()
-        view_menu.addAction(moves_explorer_action)
         self.init_toolbar([open_action, save_action])
+
+    def set_style(self, style_name=None):
+        print(f"DEBUG: set_style called with style_name={style_name}")
+        if style_name is None:
+            action = self.sender()
+            print(f"DEBUG: sender is {action}")
+            if isinstance(action, QAction):
+                style_name = action.text().lower()
+                print(f"DEBUG: style_name from action text: {style_name}")
+            else:
+                print("DEBUG: sender is not a QAction, returning")
+                return
+            
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        assets_dir = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "assets")
+        print(f"DEBUG: assets_dir is {assets_dir}")
+        
+        if style_name == "dark":
+            qss_file = os.path.join(assets_dir, "style.qss")
+            print(f"DEBUG: applying dark theme from {qss_file}")
+            self.set_html_style(True)
+            self.analysis_widget.set_theme(True)
+            self.opxl.set_theme(True)
+            from utils.helpers import update_widget_icons
+            update_widget_icons(self, True)
+        else:
+            qss_file = os.path.join(assets_dir, "light_style.qss")
+            print(f"DEBUG: applying light theme from {qss_file}")
+            self.set_html_style(False)
+            self.analysis_widget.set_theme(False)
+            self.opxl.set_theme(False)
+            from utils.helpers import update_widget_icons
+            update_widget_icons(self, False)
+        
+        try:
+            with open(qss_file, "r") as f:
+                content = f.read()
+                print(f"DEBUG: QSS content length: {len(content)}")
+                QApplication.instance().setStyleSheet(content)
+                print("DEBUG: setStyleSheet called successfully")
+        except Exception as e:
+            print(f"DEBUG: Error loading theme: {e}")
+            self.statusBar().showMessage(f"Error loading theme: {e}")
 
     def init_toolbar(self, actions: list):
         for action in actions:
@@ -265,20 +357,20 @@ class ChessApp(QMainWindow):
         if toggle:
             if self.engine.is_running():
                 self.bar.show()
+                self.fen_label.show()
                 self.send_position()
                 return
             self.engine.start()
             self.bar.show()
+            self.fen_label.show()
             self.send_position()
         else:
             self.engine.send_command("stop")
             self.bar.hide()
+            self.fen_label.hide()
 
     def enable_moves_explorer(self, toggle: bool):
-        if toggle:
-            self.opxl.setVisible(True)
-        else:
-            self.opxl.setVisible(False)
+        self.explorer_dock.setVisible(toggle)
 
     def forward(self):
         """Go forward in the move variations."""
@@ -428,6 +520,6 @@ class ChessApp(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = ChessApp()
-    window.set_html_style(True)
+    window.set_style("dark")
     window.show()
     sys.exit(app.exec_())

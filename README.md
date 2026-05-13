@@ -2,7 +2,7 @@
 
 A feature-rich, modern chess application built with Python and PyQt5, featuring high-quality SVG graphics, engine analysis, and an interactive PGN browser.
 
-![Chessboard](icon.png)
+![Chessboard](assets/icon.png)
 
 ## Features
 
@@ -41,28 +41,34 @@ A feature-rich, modern chess application built with Python and PyQt5, featuring 
 
 2. Install the required Python dependencies:
    ```bash
-   pip install PyQt5 chess
+   pip install PyQt5 chess qtawesome
    ```
 
 ## How to Run
 
-Launch the application by running the `main.py` script:
+Launch the application by running the `main.py` script located in the `src` directory:
 
 ```bash
-python main.py
+python src/main.py
 ```
 
 ## Project Structure
 
-- `main.py`: Entry point of the application, handles startup and styling.
-- `chessapp.py`: Main application window and core orchestration logic.
-- `chessboard.py`: Interactive SVG-based chessboard component.
-- `engine.py`: UCI engine wrapper for analysis and evaluation.
-- `movemanager.py`: Logic for managing game history, PGNs, and variations.
-- `puzzles.py`: Puzzle training module and UI.
-- `pgn_browser.py`: Rich text display for move history.
-- `bar.py`: Visual evaluation bar for engine scores.
-- `style.qss`: Custom stylesheet for the modern dark interface.
+- `src/main.py`: Entry point of the application, handles startup and styling.
+- `src/puzzles.py`: Puzzle training module and UI.
+- `src/gui/`: User interface components.
+  - `app.py`: Main application window and core orchestration logic.
+  - `widgets/`: Reusable UI components like `chessboard.py`, `eval_bar.py`, and `pgn_browser.py`.
+  - `dialogs/`: UI dialogs for settings, variations, and board editing.
+- `src/core/`: Core business logic.
+  - `engine.py`: UCI engine wrapper for analysis and evaluation.
+  - `move_manager.py`: Logic for managing game history, PGNs, and variations.
+  - `opening_explorer.py`: Logic for exploring chess openings.
+  - `pgn_parser.py`: PGN parsing utilities.
+  - `pgn_to_html.py`: PGN to HTML conversion logic.
+- `src/utils/`: Utility functions and helpers.
+  - `helpers.py`: Common UI helper functions.
+- `assets/`: Static assets like `style.qss` and `icon.png`.
 
 ## Technical Stack
 
@@ -70,3 +76,4 @@ python main.py
 - **GUI Framework**: [PyQt5](https://www.riverbankcomputing.com/software/pyqt/)
 - **Chess Logic**: [chess](https://github.com/niklasf/python-chess)
 - **Graphics**: SVG via `QtSvg`
+- **Icons**: [QtAwesome](https://github.com/spyder-ide/qtawesome)

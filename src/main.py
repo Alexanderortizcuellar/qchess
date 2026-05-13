@@ -13,17 +13,21 @@ def main():
     app = QApplication(sys.argv)
 
     # Load splash image
-    pix = QPixmap("icon.png")
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_dir = os.path.join(os.path.dirname(current_dir), "assets")
+    
+    pix = QPixmap(os.path.join(assets_dir, "icon.png"))
     pix = pix.scaledToWidth(528, Qt.SmoothTransformation)
 
     # Create splash screen
     splash = QSplashScreen(pix, Qt.WindowStaysOnTopHint)
     splash.show()
     # load stylesheet
-    style = load_stylesheet("style.qss")
+    style = load_stylesheet(os.path.join(assets_dir, "style.qss"))
     app.setStyleSheet(style)
     # import modules 
-    from chessapp import ChessApp
+    from gui.app import ChessApp
 
     splash.finish(None)  # close splash
     window = ChessApp()

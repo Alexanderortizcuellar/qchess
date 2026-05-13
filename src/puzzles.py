@@ -15,7 +15,7 @@ import chess.pgn
 from io import StringIO
 
 # Import your board widget
-from chessboard import ChessBoard
+from gui.widgets.chessboard import ChessBoard
 
 import sys
 from dataclasses import dataclass, field
