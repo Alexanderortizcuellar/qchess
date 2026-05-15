@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QDockWidget,
+    QAction
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget

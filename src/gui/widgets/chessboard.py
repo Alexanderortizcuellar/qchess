@@ -81,10 +81,13 @@ class ChessBoard(QtWidgets.QWidget, chess.Board):
         self.animated_piece.setStyleSheet("background-color:transparent")
         self.animated_piece.hide()
         self._current_anim = None
+        self.interactive = True  # If False, user cannot make moves
         self.set_fen(fen)
         self.draw_board()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if not self.interactive:
+            return
         if self.check_area_clicked(event):
             this_click = self.get_clicked(event)
             self.draw_board(legal_moves=self.get_legal_moves(this_click))
