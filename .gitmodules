@@ -1,0 +1,3 @@
+[submodule "gchessboard"]
+	path = gchessboard
+	url = https://github.com/Alexanderortizcuellar/gchessboard
