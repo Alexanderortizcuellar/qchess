@@ -6,6 +6,7 @@ from gchessboard.src.promotion import PromotionDialog
 class ChessBoard(QtWidgets.QWidget):
     """
     Wrapper for GChessBoard to maintain compatibility with the app.
+    Now includes an integrated EvalBar for better alignment.
     """
     ReadyForNextMove = QtCore.pyqtSignal(str)
     GameOver = QtCore.pyqtSignal()
@@ -14,11 +15,28 @@ class ChessBoard(QtWidgets.QWidget):
 
     def __init__(self, parent=None, fen=chess.STARTING_FEN, size=500):
         super().__init__(parent)
-        self.main_layout = QtWidgets.QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        from .eval_bar import EvalBar
+        
+        # Outer layout to center the board assembly
+        self.outer_layout = QtWidgets.QGridLayout(self)
+        self.outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Inner container that holds the bar and the board view tightly
+        self.inner_container = QtWidgets.QWidget()
+        self.inner_layout = QtWidgets.QHBoxLayout(self.inner_container)
+        self.inner_layout.setContentsMargins(0, 0, 0, 0)
+        self.inner_layout.setSpacing(5)
+        
+        self.eval_bar = EvalBar()
+        self.eval_bar.hide()
+        self.inner_layout.addWidget(self.eval_bar)
+        
         self.board_view = BoardView(self)
         self.board_view.setStyleSheet("border: none; background: transparent;")
-        self.main_layout.addWidget(self.board_view)
+        self.inner_layout.addWidget(self.board_view, stretch=1)
+        
+        # Center the inner_container in the outer widget
+        self.outer_layout.addWidget(self.inner_container, 0, 0, QtCore.Qt.AlignCenter)
         
         self._internal_board = chess.Board(fen)
         self._interactive = True
@@ -32,6 +50,42 @@ class ChessBoard(QtWidgets.QWidget):
             self.setMinimumSize(300, 300)
             self.resize(size, size)
         self.set_fen(fen)
+
+    def set_eval_bar_visible(self, visible: bool):
+        """Show or hide the evaluation bar and update layout."""
+        self.eval_bar.setVisible(visible)
+        # Force a resize event or just call our layout logic
+        self._update_layout()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_layout()
+
+    def _update_layout(self):
+        available_width = self.width()
+        available_height = self.height()
+        if available_width <= 0 or available_height <= 0:
+            return
+            
+        # 1. Proportional Eval Bar Width (e.g., 7% of height)
+        # Increased max width for better visibility on large screens
+        bar_w = int(available_height * 0.07)
+        bar_w = max(25, min(80, bar_w))
+        
+        has_bar = self.eval_bar.isVisible()
+        spacing = self.inner_layout.spacing() if has_bar else 0
+        actual_bar_w = bar_w if has_bar else 0
+        
+        # 2. Determine side of the square board
+        board_available_w = available_width - actual_bar_w - spacing
+        side = min(board_available_w, available_height)
+        
+        # 3. Fix the size of the inner container to keep items tight
+        compact_w = side + actual_bar_w + spacing
+        self.inner_container.setFixedSize(compact_w, side)
+        
+        if has_bar:
+            self.eval_bar.setFixedWidth(bar_w)
 
     def _update_view(self, last_move: chess.Move = None):
         """Syncs the BoardView with the internal board state."""

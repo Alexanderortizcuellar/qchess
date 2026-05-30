@@ -76,42 +76,38 @@ class ChessApp(QMainWindow):
         self.setCentralWidget(central_widget)
         central_layout = QVBoxLayout(central_widget)
 
-        # Board group with grid layout for alignment
+        # Board and FEN group
         board_group = QWidget()
-        self.board_grid = QGridLayout(board_group)
-        self.board_grid.setContentsMargins(0, 0, 0, 0)
-        self.board_grid.setSpacing(10)
+        board_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        board_group_layout = QVBoxLayout(board_group)
+        board_group_layout.setContentsMargins(0, 0, 0, 0)
+        board_group_layout.setSpacing(10)
         
-        self.bar = EvalBar()
-        self.bar.hide()
         self.chessboard = ChessBoard(self, chess.Board().fen(), size=750)
         self.chessboard.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.bar = self.chessboard.eval_bar # Alias for compatibility
         
-        # Row 0: Eval Bar and Chessboard
-        self.board_grid.addWidget(self.bar, 0, 0)
-        self.board_grid.addWidget(self.chessboard, 0, 1)
+        board_group_layout.addWidget(self.chessboard, stretch=1)
         
-        # Row 1: FEN label and FEN edit
+        # FEN display area
+        self.fen_row = QHBoxLayout()
         self.fen_label = QLabel("FEN:")
         self.fen_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.fen_edit = QLineEdit()
         self.fen_edit.setReadOnly(True)
+        self.fen_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
-        self.board_grid.addWidget(self.fen_label, 1, 0)
-        self.board_grid.addWidget(self.fen_edit, 1, 1)
+        # This will make the FEN edit stretch to match the board's area in the vertical layout
+        self.fen_row.addWidget(self.fen_label)
+        self.fen_row.addWidget(self.fen_edit, stretch=1)
+        
+        board_group_layout.addLayout(self.fen_row)
         
         # Sync visibility with eval bar
         self.fen_label.setVisible(self.bar.isVisible())
 
         # Center the board group horizontally and vertically
-        h_layout = QHBoxLayout()
-        h_layout.addStretch(1)
-        h_layout.addWidget(board_group)
-        h_layout.addStretch(1)
-        
-        central_layout.addStretch(1)
-        central_layout.addLayout(h_layout)
-        central_layout.addStretch(1)
+        central_layout.addWidget(board_group, stretch=1)
 
         # --- Docks ---
         self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks)
@@ -447,17 +443,17 @@ class ChessApp(QMainWindow):
         if toggle:
             self.analysis_widget.reset_lines()
             if self.engine.is_running():
-                self.bar.show()
+                self.chessboard.set_eval_bar_visible(True)
                 self.fen_label.show()
                 self.send_position()
                 return
             self.engine.start()
-            self.bar.show()
+            self.chessboard.set_eval_bar_visible(True)
             self.fen_label.show()
             self.send_position()
         else:
             self.engine.send_command("stop")
-            self.bar.hide()
+            self.chessboard.set_eval_bar_visible(False)
             self.fen_label.hide()
 
     def enable_moves_explorer(self, toggle: bool):

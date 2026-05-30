@@ -98,12 +98,6 @@ class AnalysisWidget(QWidget):
         """Update analysis lines with new info."""
         multipv = info.get("multipv", 1)
         
-        # Check if depth has increased - if so, we might want to clear old shallower lines
-        # but usually UCI reports all lines for the same depth.
-        # To handle changing MultiPV from 2 -> 1, we should probably clear 
-        # higher indices if the engine is no longer sending them.
-        # However, a simpler way is to clear the lines when the search starts.
-        
         self.analysis_lines[multipv] = info
         
         # Sort and render
@@ -111,7 +105,8 @@ class AnalysisWidget(QWidget):
         
         import chess
         board = chess.Board(board_fen) if board_fen else None
-        
+        turn = board.turn if board else chess.WHITE
+
         is_dark = self.header_frame.styleSheet().find("#262421") != -1
         bg_color = "#312e2b" if is_dark else "#f5f5f5"
         text_color = "#bababa" if is_dark else "#312e2b"
@@ -135,7 +130,7 @@ class AnalysisWidget(QWidget):
 
         for idx in sorted_indices:
             data = self.analysis_lines[idx]
-            score = self.format_score(data)
+            score = self.format_score(data, turn=turn)
             pv_moves = data.get("pv", [])
             
             moves_text = ""
@@ -179,16 +174,23 @@ class AnalysisWidget(QWidget):
         
         # Update top score if it's the first PV
         if multipv == 1:
-            self.set_score(self.format_score(info, raw=True))
+            self.set_score(self.format_score(info, raw=True, turn=turn))
 
     def reset_lines(self):
         """Clear the current analysis lines data."""
         self.analysis_lines.clear()
         self.lines_display.clear()
 
-    def format_score(self, info: dict, raw=False) -> str:
+    def format_score(self, info: dict, raw=False, turn=None) -> str:
+        import chess
         s_type = info.get("score_type")
         s_val = info.get("score_value", 0)
+        
+        # UCI engines report scores relative to side-to-move.
+        # Normalize to White POV (Positive = White better, Negative = Black better)
+        if turn == chess.BLACK:
+            s_val = -s_val
+
         if s_type == "mate":
             return f"M{abs(s_val)}" if not raw else f"M{s_val}"
         else:

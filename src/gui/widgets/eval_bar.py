@@ -35,8 +35,6 @@ class EvalBar(QWidget):
         self._anim.setDuration(700)
         self._anim.setEasingCurve(QEasingCurve.InOutCubic)
 
-        self.setFixedWidth(46)  # narrow, but a bit wider to accommodate text nicely
-
     # --- sizing -----------------------------------------------------------------
     def sizeHint(self):
         return self.minimumSizeHint()
@@ -44,8 +42,7 @@ class EvalBar(QWidget):
     def minimumSizeHint(self):
         # Provide a sane default footprint
         from PyQt5.QtCore import QSize
-
-        return QSize(46, 240)
+        return QSize(20, 200)
 
     # --- property to animate ----------------------------------------------------
     def getWhiteShare(self):
@@ -159,11 +156,14 @@ class EvalBar(QWidget):
         p.setPen(QColor(120, 120, 120))
         p.drawRect(r.adjusted(0, 0, -1, -1))
 
-        # Score text: put it near the bottom edge; adjust color for contrast
+        # Score text: proportional font size
+        font_size = max(6, int(total_h * 0.035))
+        if font_size > 11: font_size = 11
+        
         bottom_is_white = white_on_bottom
         text_color = QColor(30, 30, 30) if bottom_is_white else QColor(230, 230, 230)
         p.setPen(text_color)
-        p.setFont(QFont("Arial", 9, QFont.DemiBold))
+        p.setFont(QFont("Arial", font_size, QFont.DemiBold))
         p.drawText(
             r.adjusted(0, 0, 0, -2), Qt.AlignHCenter | Qt.AlignBottom, self._score_text
         )
