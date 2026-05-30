@@ -45,7 +45,18 @@ class PGNBrowser(QTextBrowser):
         self.customContextMenuRequested.connect(self.on_custom_context)
         # self.anchorClicked.connect(self.on_anchor_clicked)
 
+    def setHtml(self, html: str):
+        super().setHtml(html)
+        self.scroll_to_current()
+
+    def scroll_to_current(self):
+        node = self.movemanager.current_node
+        if node and hasattr(node, "flat_index"):
+            idx = node.flat_index
+            self.scrollToAnchor(f"m{idx}")
+
     def on_custom_context(self, point):
+
         anchor = self.anchorAt(point)
         if not anchor:
             return

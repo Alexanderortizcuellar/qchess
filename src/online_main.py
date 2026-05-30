@@ -4,8 +4,13 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import Qt
 
-# Add src to path if necessary
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Add src and root to path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+if current_dir not in sys.path:
+    sys.path.append(current_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def load_stylesheet(filename):
     if os.path.exists(filename):

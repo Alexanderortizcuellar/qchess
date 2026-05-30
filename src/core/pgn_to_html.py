@@ -80,11 +80,13 @@ class HtmlExporterMixin:
         headers: bool = True,
         comments: bool = True,
         variations: bool = True,
+        highlight_index: Optional[int] = None,
     ):
         self.columns = columns
         self.headers = headers
         self.comments = comments
         self.variations = variations
+        self.highlight_index = highlight_index
 
         self.force_movenumber = True
         self.variation_depth = 0
@@ -102,9 +104,7 @@ class HtmlExporterMixin:
         # In HTML we just separate with <br> if needed
         if line:
             self.parts.append(f"<div>{html.escape(line)}</div>")
-            print(line)
         else:
-            print("not in a line")
             self.parts.append("<br>")
 
     def end_game(self) -> None:
@@ -142,7 +142,7 @@ class HtmlExporterMixin:
     def visit_comment(self, comment: str) -> None:
         if self.comments and (self.variations or not self.variation_depth):
             safe = html.escape(comment.replace("}", "").strip())
-            self.parts.append(f'<span class="cmt">{safe}</span> ')
+            self.parts.append(f'<span class="cmt">{{{safe}}}</span> ')
             self.force_movenumber = True
 
     def visit_nag(self, nag: int) -> None:
@@ -162,9 +162,12 @@ class HtmlExporterMixin:
             san = html.escape(board.san(move))
 
             # use current index as ID and href
+            is_highlighted = self.move_index == self.highlight_index
+            highlight_class = " highlight" if is_highlighted else ""
+            
             move_html = (
                 f'<span class="move">'
-                f'{prefix}<a id="m{self.move_index}" href="move({self.move_index})" class="mv">{san}</a>'
+                f'{prefix}<a id="m{self.move_index}" href="move({self.move_index})" class="mv{highlight_class}">{san}</a>'
                 f"</span>"
             )
             self.parts.append(move_html)
@@ -187,6 +190,7 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
             .num { color: #757575; font-weight: bold; margin-right: 2px; }
             .mv { color: #1A1A1A; text-decoration: none; padding: 0 2px; }
             .mv:hover { background: #eef6ff; }
+            .mv.highlight { background: #FFF59D; color: #000; border-radius: 2px; }
             .cmt { color: #388E3C; font-style: italic; margin-left: 4px; }
             .variation { color: #9aa0a6; }
             .hdr { color: #555; font-family: monospace; }
@@ -200,6 +204,7 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
                 .num { color: #9E9E9E; font-weight: bold; margin-right: 2px; }
                 .mv { color: #BB86FC; text-decoration: none; padding: 0 2px; }
                 .mv:hover { background: #2A2A2A; border-radius: 3px; }
+                .mv.highlight { background: #4DB6AC; color: #000; border-radius: 2px; }
                 .cmt { color: #03DAC6; font-style: italic; margin-left: 4px; }
                 .variation { color: #B0BEC5; font-style: italic; }
                 .hdr { color: #8D99AE; font-family: monospace; }
@@ -217,9 +222,14 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
         self.dark_mode = is_dark_style
 
 
-def pgn_to_html(game: chess.pgn.Game, style: bool = False):
-    exporter = HtmlExporter(variations=True, comments=True, headers=False)
+def pgn_to_html(game: chess.pgn.Game, highlight_node: Optional[chess.pgn.GameNode] = None, style: bool = False):
+    nodes = flatten_nodes_pgn_order(game)
+    highlight_index = None
+    if highlight_node is not None:
+        highlight_index = getattr(highlight_node, "flat_index", None)
+        
+    exporter = HtmlExporter(variations=True, comments=True, headers=False, highlight_index=highlight_index)
     exporter.set_style(style)
     data = game.accept(exporter)
-    nodes = flatten_nodes_pgn_order(game)
     return data, nodes
+

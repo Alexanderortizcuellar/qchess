@@ -12,7 +12,11 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QButtonGroup,
     QDialog,
-    QLineEdit
+    QLineEdit,
+    QComboBox,
+    QCheckBox,
+    QGroupBox,
+    QDialogButtonBox
 )
 from PyQt5.QtCore import Qt, QSize, QByteArray, QMimeData
 from PyQt5.QtGui import QPixmap, QPainter, QIcon, QDrag
@@ -269,11 +273,102 @@ class ChessBoardEditor(QWidget):
 
 
 class BoardEditorDlg(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_fen=None):
         super().__init__(parent)
+        self.setWindowTitle("Board Editor")
+        self.setMinimumWidth(600)
+        
         self.board_editor = ChessBoardEditor()
+        if initial_fen:
+            try:
+                self.board_editor.board.set_fen(initial_fen)
+                self.board_editor.update_board_ui()
+            except:
+                pass
+
         self.main_layout = QVBoxLayout(self)
         self.main_layout.addWidget(self.board_editor)
+
+        # --- FEN Controls ---
+        controls_group = QGroupBox("FEN Properties")
+        controls_layout = QHBoxLayout(controls_group)
+        
+        self.turn_combo = QComboBox()
+        self.turn_combo.addItems(["White to move", "Black to move"])
+        self.turn_combo.currentIndexChanged.connect(self.update_fen_from_controls)
+        
+        self.castling_wk = QCheckBox("WK")
+        self.castling_wq = QCheckBox("WQ")
+        self.castling_bk = QCheckBox("BK")
+        self.castling_bq = QCheckBox("BQ")
+        
+        for cb in [self.castling_wk, self.castling_wq, self.castling_bk, self.castling_bq]:
+            cb.toggled.connect(self.update_fen_from_controls)
+
+        controls_layout.addWidget(QLabel("Turn:"))
+        controls_layout.addWidget(self.turn_combo)
+        controls_layout.addSpacing(20)
+        controls_layout.addWidget(QLabel("Castling:"))
+        controls_layout.addWidget(self.castling_wk)
+        controls_layout.addWidget(self.castling_wq)
+        controls_layout.addWidget(self.castling_bk)
+        controls_layout.addWidget(self.castling_bq)
+        controls_layout.addStretch()
+
+        self.main_layout.addWidget(controls_group)
+
+        # --- Utility Buttons ---
+        utils_layout = QHBoxLayout()
+        clear_btn = QPushButton("Clear Board")
+        reset_btn = QPushButton("Reset to Start")
+        clear_btn.clicked.connect(self.clear_board)
+        reset_btn.clicked.connect(self.reset_board)
+        utils_layout.addWidget(clear_btn)
+        utils_layout.addWidget(reset_btn)
+        utils_layout.addStretch()
+        self.main_layout.addLayout(utils_layout)
+
+        # --- Dialog Buttons ---
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        self.main_layout.addWidget(self.button_box)
+
+        self.sync_controls_to_board()
+
+    def sync_controls_to_board(self):
+        board = self.board_editor.board
+        self.turn_combo.setCurrentIndex(0 if board.turn == chess.WHITE else 1)
+        self.castling_wk.setChecked(bool(board.castling_rights & chess.BB_H1))
+        self.castling_wq.setChecked(bool(board.castling_rights & chess.BB_A1))
+        self.castling_bk.setChecked(bool(board.castling_rights & chess.BB_H8))
+        self.castling_bq.setChecked(bool(board.castling_rights & chess.BB_A8))
+
+    def update_fen_from_controls(self):
+        board = self.board_editor.board
+        board.turn = chess.WHITE if self.turn_combo.currentIndex() == 0 else chess.BLACK
+        
+        # This is a bit tricky with python-chess castling_rights, 
+        # but we can set it via bitmask
+        wk = chess.BB_H1 if self.castling_wk.isChecked() else 0
+        wq = chess.BB_A1 if self.castling_wq.isChecked() else 0
+        bk = chess.BB_H8 if self.castling_bk.isChecked() else 0
+        bq = chess.BB_A8 if self.castling_bq.isChecked() else 0
+        board.castling_rights = wk | wq | bk | bq
+        self.board_editor.update_board_ui()
+
+    def clear_board(self):
+        self.board_editor.board.clear()
+        self.board_editor.update_board_ui()
+        self.sync_controls_to_board()
+
+    def reset_board(self):
+        self.board_editor.board.reset()
+        self.board_editor.update_board_ui()
+        self.sync_controls_to_board()
+
+    def get_fen(self):
+        return self.board_editor.board.fen()
     
 
 

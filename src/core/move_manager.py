@@ -61,6 +61,7 @@ class MoveManager(QObject):
     def undo(self):
         if self.current_node.parent:
             self.current_node = self.current_node.parent
+            self.create_mapping()
 
     def get_current_node_variations(self):
         """Return a list of variations from the current node."""
@@ -81,15 +82,20 @@ class MoveManager(QObject):
         """Go forward into a variation. Default is main line (index 0)."""
         if self.current_node.variations:
             self.current_node = self.current_node.variations[variation_index]
+            self.create_mapping()
 
     def jump_to(self, index: int):
         self.current_node = self.nodes[index]
+        self.create_mapping()
 
     def jump_to_start(self):
         self.current_node = self.game
+        self.create_mapping()
 
     def jump_to_end(self):
-        self.current_node = self.nodes[-1]
+        if self.nodes:
+            self.current_node = self.nodes[-1]
+            self.create_mapping()
 
     def get_board(self):
         return self.current_node.board()
@@ -102,8 +108,9 @@ class MoveManager(QObject):
         return str(self.game)
 
     def create_mapping(self):
-        self.html, self.nodes = pgn_to_html(self.game, self.html_style)
+        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style)
         self.pgnChanged.emit(self.get_pgn())
+
 
     def add_comment(self, index: int, comment: str):
         node = self.get_node_by_index(index)

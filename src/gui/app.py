@@ -18,7 +18,9 @@ from PyQt5.QtWidgets import (
     QLabel,
     QLineEdit,
     QDockWidget,
-    QAction
+    QAction,
+    QSizePolicy,
+    QGridLayout
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget
@@ -30,6 +32,9 @@ from gui.widgets.pgn_browser import PGNBrowser
 from gui.dialogs.variations_dlg import VariationsDialog
 from utils.helpers import _create_action, _create_iconed_button
 from gui.dialogs.board_editor import BoardEditorDlg
+from gui.dialogs.engine_dlg import EngineConfigDialog
+from gui.dialogs.pgn_import_dlg import PGNImportDlg
+from gui.dialogs.settings_dlg import SettingsDialog
 from core.opening_explorer import OpeningExplorerLogic
 
 text = """[Event "?"]
@@ -52,62 +57,61 @@ class ChessApp(QMainWindow):
         self.setWindowTitle("Chess App")
         self.move_manager = MoveManager()
         self.engine = ChessEngine("stockfish", self)
+        
+        # Load engine settings on startup
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Engine")
+        if settings.value("path"):
+            config = {
+                "path": settings.value("path"),
+                "threads": int(settings.value("threads", 1)),
+                "hash": int(settings.value("hash", 16)),
+                "multipv": int(settings.value("multipv", 1)),
+                "syzygy": settings.value("syzygy", "")
+            }
+            self.engine.set_settings(config)
 
         # --- Central Widget (Board Area) ---
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         central_layout = QVBoxLayout(central_widget)
-        central_layout.addStretch()
 
-        # Board and FEN group
+        # Board group with grid layout for alignment
         board_group = QWidget()
-        board_group_layout = QVBoxLayout(board_group)
-        board_group_layout.setContentsMargins(0, 0, 0, 0)
-        board_group_layout.setSpacing(10)
-
-        board_bar_container = QWidget()
-        board_bar_layout = QHBoxLayout(board_bar_container)
-        board_bar_layout.setContentsMargins(0, 0, 0, 0)
-        board_bar_layout.setSpacing(10)
+        self.board_grid = QGridLayout(board_group)
+        self.board_grid.setContentsMargins(0, 0, 0, 0)
+        self.board_grid.setSpacing(10)
         
         self.bar = EvalBar()
         self.bar.hide()
         self.chessboard = ChessBoard(self, chess.Board().fen(), size=750)
+        self.chessboard.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        board_bar_layout.addWidget(self.bar)
-        board_bar_layout.addWidget(self.chessboard)
+        # Row 0: Eval Bar and Chessboard
+        self.board_grid.addWidget(self.bar, 0, 0)
+        self.board_grid.addWidget(self.chessboard, 0, 1)
         
-        # We don't necessarily need a fixed size if the layout handles it, 
-        # but let's keep it consistent with the board row for now if needed.
-        # Actually, removing fixed size might help with centering when bar is hidden.
-        # board_bar_container.setFixedSize(
-        #     self.chessboard.width() + self.bar.width() + 10, self.chessboard.height()
-        # )
-        self.bar.setFixedHeight(self.chessboard.height() - 20)
-        board_group_layout.addWidget(board_bar_container)
-
-        self.fen_row = QHBoxLayout()
-        self.fen_row.setContentsMargins(0, 0, 0, 0)
-        self.fen_row.setSpacing(10)
-        
+        # Row 1: FEN label and FEN edit
         self.fen_label = QLabel("FEN:")
-        self.fen_label.setFixedWidth(self.bar.width())
         self.fen_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        
         self.fen_edit = QLineEdit()
         self.fen_edit.setReadOnly(True)
-        # Ensure FEN edit matches the board width
-        self.fen_edit.setFixedWidth(self.chessboard.width())
         
-        self.fen_row.addWidget(self.fen_label)
-        self.fen_row.addWidget(self.fen_edit)
-        board_group_layout.addLayout(self.fen_row)
+        self.board_grid.addWidget(self.fen_label, 1, 0)
+        self.board_grid.addWidget(self.fen_edit, 1, 1)
         
         # Sync visibility with eval bar
         self.fen_label.setVisible(self.bar.isVisible())
 
-        central_layout.addWidget(board_group, alignment=Qt.AlignCenter)
-        central_layout.addStretch()
+        # Center the board group horizontally and vertically
+        h_layout = QHBoxLayout()
+        h_layout.addStretch(1)
+        h_layout.addWidget(board_group)
+        h_layout.addStretch(1)
+        
+        central_layout.addStretch(1)
+        central_layout.addLayout(h_layout)
+        central_layout.addStretch(1)
 
         # --- Docks ---
         self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks)
@@ -184,6 +188,9 @@ class ChessApp(QMainWindow):
         self.addToolBar(self.toolbar)
         self.init_menubar()
         self.display_pgn()
+        
+        # Apply initial settings
+        self.apply_settings()
 
         # --- Signals ---
         self.chessboard.moveMade.connect(self.handle_move)
@@ -204,10 +211,35 @@ class ChessApp(QMainWindow):
         self.chessboard.fenChanged.connect(self.send_position)
         self.chessboard.fenChanged.connect(self.send_fen_to_opxl)
         self.opxl.errorOcurred.connect(self.statusBar().showMessage)
-        self.engine.cpScoreFound.connect(self.get_score)
+        
+        # Engine Signals
+        self.engine.analysisUpdated.connect(self.on_analysis_updated)
         self.engine.depthChanged.connect(lambda depth: self.analysis_widget.set_depth(f"depth={depth}"))
-        self.engine.lineFound.connect(self.on_lines_found)
-        self.engine.mateFound.connect(self.get_mate)
+        self.engine.moveFound.connect(self.on_best_move_found)
+
+    def on_analysis_updated(self, info: dict):
+        self.analysis_widget.update_analysis(info, self.chessboard.fen())
+        # Update eval bar with PV1 score
+        if info.get("multipv") == 1:
+            s_type = info.get("score_type")
+            s_val = info.get("score_value")
+            
+            # UCI engines report scores relative to side-to-move.
+            # Normalize to White POV for the eval bar.
+            white_pov_score = s_val
+            if self.chessboard.turn == chess.BLACK:
+                white_pov_score = -s_val
+
+            if s_type == "mate":
+                self.bar.setEngineScore({"type": "mate", "value": white_pov_score})
+                self.bar.setToolTip(f"Mate in {white_pov_score}")
+            else:
+                self.bar.setEngineScore({"type": "cp", "value": white_pov_score})
+                self.bar.setToolTip(f"{white_pov_score / 100.0:+.2f}")
+
+    def on_best_move_found(self, move_uci: str):
+        # Could highlight best move on board if desired
+        pass
 
     def set_html_style(self, html_style: bool):
         """Set the HTML style to either light or dark. (True for dark, False for light)"""
@@ -232,6 +264,33 @@ class ChessApp(QMainWindow):
             icon_name="fa5s.save",
             status_tip="Save a pgn file",
             tool_tip="Save a pgn file",
+        )
+        paste_pgn_action = _create_action(
+            self,
+            "Paste PGN",
+            self.paste_pgn,
+            "Ctrl+V",
+            icon_name="fa5s.paste",
+            status_tip="Paste PGN from clipboard",
+            tool_tip="Paste PGN from clipboard",
+        )
+        engine_action = _create_action(
+            self,
+            "Engine Config",
+            self.open_engine_config,
+            "Ctrl+E",
+            icon_name="fa6s.gear",
+            status_tip="Configure chess engine",
+            tool_tip="Configure chess engine",
+        )
+        settings_action = _create_action(
+            self,
+            "Settings",
+            self.open_settings,
+            "Ctrl+P",
+            icon_name="fa5s.sliders-h",
+            status_tip="General settings",
+            tool_tip="General settings",
         )
         quit_action = _create_action(
             self,
@@ -267,11 +326,36 @@ class ChessApp(QMainWindow):
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
+        file_menu.addAction(paste_pgn_action)
+        file_menu.addAction(engine_action)
+        file_menu.addAction(settings_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
         view_menu.addAction(dark_action)
         view_menu.addAction(light_action)
-        self.init_toolbar([open_action, save_action])
+        self.init_toolbar([open_action, save_action, paste_pgn_action, engine_action, settings_action])
+
+    def open_settings(self):
+        dlg = SettingsDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            self.apply_settings()
+
+    def apply_settings(self):
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Config")
+        
+        theme = settings.value("board_theme", "Classic")
+        self.chessboard.set_theme(theme)
+        
+        premoves = settings.value("premoves_enabled", True, type=bool)
+        self.chessboard.set_premoves_enabled(premoves)
+        
+        anim_dur = int(settings.value("animation_duration", 200))
+        self.chessboard.board_view.set(animation={"duration": anim_dur})
+        
+        # Centralize analysis depth
+        depth = int(settings.value("analysis_depth", 20))
+        # This depth will be used in send_position()
 
     def set_style(self, style_name=None):
         print(f"DEBUG: set_style called with style_name={style_name}")
@@ -337,8 +421,13 @@ class ChessApp(QMainWindow):
             self.display_pgn()
             self.chessboard.update_board(fen)
         else:
-            dlg = BoardEditorDlg(self)
-            dlg.exec_()
+            current_fen = self.chessboard.fen()
+            dlg = BoardEditorDlg(self, initial_fen=current_fen)
+            if dlg.exec_() == QDialog.Accepted:
+                new_fen = dlg.get_fen()
+                self.move_manager.load_fen(new_fen)
+                self.display_pgn()
+                self.chessboard.update_board(new_fen)
 
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())
@@ -356,6 +445,7 @@ class ChessApp(QMainWindow):
 
     def toggle_analysis(self, toggle: bool):
         if toggle:
+            self.analysis_widget.reset_lines()
             if self.engine.is_running():
                 self.bar.show()
                 self.fen_label.show()
@@ -429,60 +519,36 @@ class ChessApp(QMainWindow):
     def send_position(self):
         if self.analysis_widget.check_analysis.isChecked():
             self.engine.send_command("stop")
+            self.analysis_widget.reset_lines()
+            # Get depth from settings or use default
+            from PyQt5.QtCore import QSettings
+            settings = QSettings("TestChessApp", "Config")
+            depth = int(settings.value("analysis_depth", 20))
             self.engine.send_position(
-                self.chessboard.fen(), "depth", options={"depth": 60}
+                self.chessboard.fen(), "depth", options={"depth": depth}
             )
 
-    def normalize_score(self, score) -> int:
-        score = max(-10, min(10, score))
-        return int((score + 10) / 20 * 1000)
+    def open_engine_config(self):
+        dlg = EngineConfigDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            config = dlg.get_config()
+            self.engine.set_settings(config)
+            if self.analysis_widget.check_analysis.isChecked():
+                self.send_position()
 
-    def on_lines_found(self, lines: list[str]):
-        if self.chessboard.dragging:
-            return
-        board = chess.Board(self.chessboard.fen())
-        if len(lines) >= 1:
-            move1_uci = lines[0]
-            move1 = chess.Move.from_uci(move1_uci)
-            if move1 not in board.legal_moves:
-                return
-        header = f'[FEN "{board.fen()}"]\n\n'
-        pgn = header + " ".join(lines)
-        move1_uci = lines[0]
-        move1 = chess.Move.from_uci(move1_uci)
-        game = chess.pgn.read_game(StringIO(pgn))
-        self.analysis_widget.set_line_text(str(game.mainline_moves()))
-
-    def get_score(self, score: int):
-        if self.chessboard.turn:
-            if score < 0:
-                score = score
+    def paste_pgn(self):
+        clipboard = QApplication.clipboard()
+        pgn_text = clipboard.text()
+        
+        dlg = PGNImportDlg(self, initial_text=pgn_text)
+        if dlg.exec_() == QDialog.Accepted:
+            final_pgn = dlg.get_pgn()
+            if final_pgn:
+                self.move_manager.update_pgn(final_pgn)
+                self.display_pgn()
+                self.chessboard.update_board(self.move_manager.get_board().fen())
             else:
-                score = score
-        else:
-            if score > 0:
-                score = -score
-            else:
-                score = abs(score)
-        self.bar.setEngineScore({"type": "cp", "value": score})
-        self.bar.setToolTip(str(score / 100))
-        self.analysis_widget.set_score(str(score / 100))
-
-    def get_mate(self, matein: int):
-        if matein == 0:
-            return
-        if matein > 0:
-            if self.chessboard.turn:
-                self.bar.setEngineScore({"type": "mate", "value": matein})
-            else:
-                self.bar.setEngineScore({"type": "mate", "value": -matein})
-        else:
-            if self.chessboard.turn:
-                self.bar.setEngineScore({"type": "mate", "value": matein})
-            else:
-                self.bar.setEngineScore({"type": "mate", "value": -matein})
-        self.analysis_widget.set_score(f"M{matein}")
-        self.bar.setToolTip(f"M{matein}")
+                self.statusBar().showMessage("Imported PGN was empty.")
 
     def open_pgn(self):
         file, ok = QFileDialog.getOpenFileName(

@@ -1,4 +1,5 @@
-from typing import Literal
+import re
+from typing import Literal, Dict, Any, List
 
 from PyQt5 import QtCore
 
@@ -6,9 +7,7 @@ from PyQt5 import QtCore
 class ChessEngine(QtCore.QProcess):
     moveFound = QtCore.pyqtSignal(str)
     depthChanged = QtCore.pyqtSignal(int)
-    lineFound = QtCore.pyqtSignal(list)
-    cpScoreFound = QtCore.pyqtSignal(int)
-    mateFound = QtCore.pyqtSignal(int)
+    analysisUpdated = QtCore.pyqtSignal(dict)  # Emits dict with MultiPV info
 
     def __init__(self, engine_path, parent=None):
         super().__init__(parent)
@@ -16,80 +15,132 @@ class ChessEngine(QtCore.QProcess):
         self.setProcessChannelMode(QtCore.QProcess.MergedChannels)
         self.setProgram(self.engine_path)
         self.readyReadStandardOutput.connect(self.read_data)
-        # self.stateChanged.connect(self.on_state_changed)
+        self.analysis_data = {}
 
     def read_data(self):
-        data = self.readAllStandardOutput().data().decode()
-        if "uciok" in data:
-            self.write("isready\n".encode())
-        pattern = QtCore.QRegularExpression(r"(depth\s+)(\d+)")
-        depth = pattern.match(data)
-        if depth.hasMatch():
-            self.depthChanged.emit(int(depth.captured(2)))
-        pattern = QtCore.QRegularExpression(r"(bestmove\s+)(\w+)")
-        best_move = pattern.match(data)
+        try:
+            raw_data = self.readAllStandardOutput().data().decode("utf-8", errors="replace")
+        except Exception:
+            return
 
-        if best_move.hasMatch():
-            self.moveFound.emit(best_move.captured(2))
-        pv_pattern = QtCore.QRegularExpression(r"(pv\s+)(.*)")
-        pv_match = pv_pattern.match(data)
-        if pv_match.hasMatch():
-            pv_moves = pv_match.captured(2).split("pv")[-1].split()
-            self.lineFound.emit(pv_moves)
-        cp_pattern = QtCore.QRegularExpression(r"score cp (-?\d+)")
-        cp_match = cp_pattern.match(data)
-        if cp_match.hasMatch():
-            self.cpScoreFound.emit(int(cp_match.captured(1)))
-        if "mate" in data:
-            mate_pattern = QtCore.QRegularExpression(r"score mate (-?\d+)")
-            for line in data.splitlines():
-                mate_match = mate_pattern.match(line)
-                if mate_match.hasMatch():
-                    self.mateFound.emit(int(mate_match.captured(1)))
-            for line in data.splitlines():
-                match_pv = pv_pattern.match(line)
-                parts = match_pv.captured(0).split("pv")
-                if len(parts) > 2:
-                    moves = parts[-1].split()
-                    self.lineFound.emit(moves)
+        for line in raw_data.splitlines():
+            line = line.strip()
+            if not line:
+                continue
 
-    def set_threads(self, threads):
-        self.write(f"setoption name Threads value {threads}\n".encode())
+            if "uciok" in line:
+                self.send_command("isready")
+            
+            if line.startswith("bestmove"):
+                match = re.search(r"bestmove\s+(\S+)", line)
+                if match:
+                    self.moveFound.emit(match.group(1))
+                continue
+
+            if line.startswith("info"):
+                self.parse_info_line(line)
+
+    def parse_info_line(self, line: str):
+        # Extract depth
+        depth_match = re.search(r"depth\s+(\d+)", line)
+        if depth_match:
+            depth = int(depth_match.group(1))
+            self.depthChanged.emit(depth)
+        
+        # Extract MultiPV index
+        multipv = 1
+        multipv_match = re.search(r"multipv\s+(\d+)", line)
+        if multipv_match:
+            multipv = int(multipv_match.group(1))
+
+        # Extract score
+        score_type = None
+        score_value = None
+        cp_match = re.search(r"score cp (-?\d+)", line)
+        mate_match = re.search(r"score mate (-?\d+)", line)
+        
+        # We need to know who is to move to normalize to White POV if the engine doesn't
+        # But UCI standard says score is relative to the side to move.
+        # However, many implementations (including python-chess) expect absolute (White POV).
+        # We'll normalize in the app or here if we have the board state.
+        
+        if cp_match:
+            score_type = "cp"
+            score_value = int(cp_match.group(1))
+        elif mate_match:
+            score_type = "mate"
+            score_value = int(mate_match.group(1))
+
+        # Extract PV moves
+        pv_match = re.search(r" pv\s+(.*)", line)
+        pv_moves = []
+        if pv_match:
+            pv_moves = pv_match.group(1).split()
+
+        if score_type and pv_moves:
+            info = {
+                "multipv": multipv,
+                "score_type": score_type,
+                "score_value": score_value,
+                "pv": pv_moves,
+                "depth": depth if depth_match else None
+            }
+            self.analysisUpdated.emit(info)
+
+    def set_option(self, name: str, value: Any):
+        self.send_command(f"setoption name {name} value {value}")
 
     def send_position(
-        self, position: str, mode: Literal["depth", "time"], options: dict
+        self, position: str, mode: Literal["depth", "time"] = "depth", options: dict = None
     ):
+        if options is None:
+            options = {"depth": 20}
+        
         self.send_command(f"position fen {position}")
         if mode == "depth":
-            self.send_command(f"go depth {options.get("depth")}")
+            self.send_command(f"go depth {options.get('depth', 20)}")
         elif mode == "time":
-            self.send_command(f"go time {options.get("time")}")
+            self.send_command(f"go time {options.get('time', 1000)}")
+        else:
+            self.send_command("go infinite")
 
     def set_settings(self, settings: dict):
-        if self.state() == QtCore.QProcess.Running:
+        # settings keys: path, threads, hash, multipv, etc.
+        is_running = self.is_running()
+        if is_running:
             self.quit()
-            self.waitForFinished()
-            self.engine_path = settings["path"]
+        
+        self.engine_path = settings.get("path", self.engine_path)
         self.setProgram(self.engine_path)
-        self.set_threads(settings["threads"])
         self.start()
-        self.waitForReadyRead()
+        if not self.waitForStarted(3000):
+            return
+            
         self.send_command("uci")
+        if not self.waitForReadyRead(3000):
+            pass # Continue anyway
+            
+        self.set_option("Threads", settings.get("threads", 1))
+        self.set_option("Hash", settings.get("hash", 16))
+        self.set_option("MultiPV", settings.get("multipv", 1))
+        
+        # Syzygy
+        syzygy = settings.get("syzygy")
+        if syzygy:
+            self.set_option("SyzygyPath", syzygy)
+
+        self.send_command("isready")
 
     def send_command(self, command: str):
-        if self.state() == QtCore.QProcess.Running and self.isWritable():
+        if self.state() == QtCore.QProcess.Running:
             self.write(f"{command}\n".encode())
 
     def quit(self):
         if self.state() == QtCore.QProcess.Running:
             self.send_command("quit")
-            self.waitForFinished()
+            if not self.waitForFinished(2000):
+                self.terminate()
 
     def is_running(self):
         return self.state() == QtCore.QProcess.Running
 
-    def on_state_changed(self, state):
-        if state == QtCore.QProcess.Running:
-            print("Engine is running")
-        elif state == QtCore.QProcess.NotRunning:
-            print("Engine is not running or has stopped")

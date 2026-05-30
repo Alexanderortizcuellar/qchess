@@ -421,6 +421,16 @@ class OnlineChessApp(QMainWindow):
         self.side_to_move = state.get("side_to_move")
         new_status = state.get("status", "ongoing")
         
+        # Set user color for premoves support
+        if self.my_color == 'white':
+            self.chessboard.user_color = chess.WHITE
+        elif self.my_color == 'black':
+            self.chessboard.user_color = chess.BLACK
+        else:
+            self.chessboard.user_color = None
+        
+        self.chessboard.set_premoves_enabled(True)
+
         # If it's my first time in this game and I'm black, flip the board
         if self.my_color == 'black' and self.chessboard.side == chess.WHITE:
             self.chessboard.flip()
