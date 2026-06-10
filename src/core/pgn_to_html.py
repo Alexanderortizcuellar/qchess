@@ -188,9 +188,9 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
         <style>
         .move {display: inline; }
             .num { color: #757575; font-weight: bold; margin-right: 2px; }
-            .mv { color: #1A1A1A; text-decoration: none; padding: 0 2px; }
+            .mv { color: #1A1A1A; text-decoration: none; padding: 4px 2px; }
             .mv:hover { background: #eef6ff; }
-            .mv.highlight { background: #FFF59D; color: #000; border-radius: 2px; }
+            .mv.highlight { background: #FFF59D; color: #000; }
             .cmt { color: #388E3C; font-style: italic; margin-left: 4px; }
             .variation { color: #9aa0a6; }
             .hdr { color: #555; font-family: monospace; }
@@ -199,12 +199,12 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
         """
         dark_style = """
             <style>
-                body { background-color: #121212; color: #E0E0E0; font-family: sans-serif; }
+                body { background-color: #121212; color: #E0E0E0; font-family: sans-serif; line-height: 1.6; }
                 .move { display: inline; }
                 .num { color: #9E9E9E; font-weight: bold; margin-right: 2px; }
-                .mv { color: #BB86FC; text-decoration: none; padding: 0 2px; }
-                .mv:hover { background: #2A2A2A; border-radius: 3px; }
-                .mv.highlight { background: #4DB6AC; color: #000; border-radius: 2px; }
+                .mv { color: #BB86FC; text-decoration: none; padding: 4px 2px; }
+                .mv:hover { background: #2A2A2A; }
+                .mv.highlight { background: #4DB6AC; color: #000; }
                 .cmt { color: #03DAC6; font-style: italic; margin-left: 4px; }
                 .variation { color: #B0BEC5; font-style: italic; }
                 .hdr { color: #8D99AE; font-family: monospace; }

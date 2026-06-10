@@ -38,7 +38,7 @@ def main():
     splash.finish(None)  # close splash
     window = ChessApp()
     window.setWindowIcon(QIcon(pix))
-    window.set_html_style(True)
+    window.set_style("dark")
     window.show()
     sys.exit(app.exec_())
 

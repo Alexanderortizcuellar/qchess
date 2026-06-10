@@ -15,22 +15,23 @@ MOVES = [
     {"black_wins": 0, "draws": 0, "move": "g6", "white_wins": 1},
 ]
 
+
 class OpeningExplorerHeader(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(30)
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 0)
-        
+
         self.move_lbl = QtWidgets.QLabel("Move")
         self.move_lbl.setFixedWidth(50)
-        
+
         self.stats_lbl = QtWidgets.QLabel("Stats (W / D / B)")
         self.stats_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        
+
         layout.addWidget(self.move_lbl)
         layout.addWidget(self.stats_lbl)
-        
+
         self.set_theme(True)
 
     def set_theme(self, is_dark: bool):
@@ -38,6 +39,7 @@ class OpeningExplorerHeader(QtWidgets.QWidget):
         style = f"color: {color}; font-weight: bold; font-size: 11px;"
         self.move_lbl.setStyleSheet(style)
         self.stats_lbl.setStyleSheet(style)
+
 
 class PercentageBar(QtWidgets.QWidget):
     def __init__(self, white_win, draw, black_win, parent=None):
@@ -48,6 +50,20 @@ class PercentageBar(QtWidgets.QWidget):
         self.setFixedHeight(24)
         self.is_dark = True
 
+        # Calculate percentages and set tooltip
+        total = self.white_win + self.draw + self.black_win
+        if total > 0:
+            white_pct = (self.white_win / total) * 100
+            draw_pct = (self.draw / total) * 100
+            black_pct = (self.black_win / total) * 100
+            self.setToolTip(
+                f"White wins: {self.white_win} ({white_pct:.1f}%)\n"
+                f"Draws: {self.draw} ({draw_pct:.1f}%)\n"
+                f"Black wins: {self.black_win} ({black_pct:.1f}%)"
+            )
+        else:
+            self.setToolTip("No games played")
+
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
         self.update()
@@ -55,13 +71,14 @@ class PercentageBar(QtWidgets.QWidget):
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        
+
         total_w = self.width()
         h = self.height()
-        
+
         total = self.white_win + self.draw + self.black_win
-        if total == 0: return
-        
+        if total == 0:
+            return
+
         pw = (self.white_win / total) * total_w
         pd = (self.draw / total) * total_w
         pb = total_w - pw - pd
@@ -72,15 +89,19 @@ class PercentageBar(QtWidgets.QWidget):
         color_black = QtGui.QColor("#312e2b")
 
         painter.setPen(QtCore.Qt.NoPen)
-        
+
         # White
         if pw > 0:
             painter.setBrush(color_white)
             painter.drawRect(QtCore.QRectF(0, 0, pw, h))
             if pw > 25:
                 painter.setPen(QtGui.QColor("#000000"))
-                painter.drawText(QtCore.QRectF(0, 0, pw, h), QtCore.Qt.AlignCenter, f"{self.white_win:.0f}%")
-        
+                painter.drawText(
+                    QtCore.QRectF(0, 0, pw, h),
+                    QtCore.Qt.AlignCenter,
+                    f"{self.white_win}",
+                )
+
         # Draw
         if pd > 0:
             painter.setPen(QtCore.Qt.NoPen)
@@ -88,7 +109,12 @@ class PercentageBar(QtWidgets.QWidget):
             painter.drawRect(QtCore.QRectF(pw, 0, pd, h))
             if pd > 25:
                 painter.setPen(QtGui.QColor("#ffffff"))
-        
+                painter.drawText(
+                    QtCore.QRectF(pw, 0, pd, h),
+                    QtCore.Qt.AlignCenter,
+                    f"{self.draw}",
+                )
+
         # Black
         if pb > 0:
             painter.setPen(QtCore.Qt.NoPen)
@@ -96,7 +122,12 @@ class PercentageBar(QtWidgets.QWidget):
             painter.drawRect(QtCore.QRectF(pw + pd, 0, pb, h))
             if pb > 25:
                 painter.setPen(QtGui.QColor("#ffffff"))
-                painter.drawText(QtCore.QRectF(pw + pd, 0, pb, h), QtCore.Qt.AlignCenter, f"{self.black_win:.0f}%")
+                painter.drawText(
+                    QtCore.QRectF(pw + pd, 0, pb, h),
+                    QtCore.Qt.AlignCenter,
+                    f"{self.black_win}",
+                )
+
 
 class MoveItem(QtWidgets.QWidget):
     def __init__(self, move_data, parent=None):
@@ -104,25 +135,26 @@ class MoveItem(QtWidgets.QWidget):
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(10, 4, 10, 4)
         layout.setSpacing(10)
-        
+
         self.move_lbl = QtWidgets.QLabel(move_data["move"])
         self.move_lbl.setFixedWidth(50)
-        
+
         self.bar = PercentageBar(
-            move_data["white_wins"], 
-            move_data["draws"], 
-            move_data["black_wins"]
+            move_data["white_wins"], move_data["draws"], move_data["black_wins"]
         )
-        
+
         layout.addWidget(self.move_lbl)
         layout.addWidget(self.bar)
-        
+
         self.set_theme(True)
 
     def set_theme(self, is_dark: bool):
         color = "#ffffff" if is_dark else "#312e2b"
-        self.move_lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 13px;")
+        self.move_lbl.setStyleSheet(
+            f"color: {color}; font-weight: bold; font-size: 13px;"
+        )
         self.bar.set_theme(is_dark)
+
 
 class OpeningExplorer(QtWidgets.QWidget):
     def __init__(self, parent=None, positions=[]):
@@ -130,23 +162,25 @@ class OpeningExplorer(QtWidgets.QWidget):
         self.main_layout = QtWidgets.QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
-        
+
         self.header = OpeningExplorerHeader(self)
         self.main_layout.addWidget(self.header)
-        
+
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        
+        self.scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+
         self.container = QtWidgets.QWidget()
         self.container_layout = QtWidgets.QVBoxLayout(self.container)
         self.container_layout.setContentsMargins(0, 0, 0, 0)
         self.container_layout.setSpacing(1)
         self.container_layout.addStretch()
-        
+
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
-        
+
         self.set_theme(True)
 
         if positions:
@@ -167,11 +201,12 @@ class OpeningExplorer(QtWidgets.QWidget):
             item = self.container_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        
+
         for move in positions:
             item = MoveItem(move, self)
             item.set_theme(self.is_dark)
             self.container_layout.insertWidget(self.container_layout.count() - 1, item)
+
 
 class OpeningProcess(QtCore.QObject):
     dataReady = QtCore.pyqtSignal(list)
@@ -180,7 +215,9 @@ class OpeningProcess(QtCore.QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process = QtCore.QProcess(self)
-        self.process.setProgram(r"C:\Users\ASUS\programming\qt_programs\chess\expl\expl.exe")
+        self.process.setProgram(
+            r"C:\Users\ASUS\programming\qt_programs\chess\expl\expl.exe"
+        )
         self.process.readyReadStandardOutput.connect(self.process_output)
         self.path = r"C:\Users\ASUS\Downloads\alex.pgn"
 
@@ -190,7 +227,7 @@ class OpeningProcess(QtCore.QObject):
         fen_parts = fen.split(" ")
         if len(fen_parts) > 4:
             fen = " ".join(fen_parts[0:4])
-        
+
         self.process.setArguments([self.path, fen])
         self.process.start()
 
@@ -203,6 +240,7 @@ class OpeningProcess(QtCore.QObject):
         except Exception as e:
             self.errorOcurred.emit(f"Explorer Error: {str(e)}")
 
+
 class OpeningExplorerLogic(QtWidgets.QWidget):
     errorOcurred = QtCore.pyqtSignal(str)
 
@@ -212,7 +250,7 @@ class OpeningExplorerLogic(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.explorer)
-        
+
         self.opening_process = OpeningProcess(self)
         self.opening_process.dataReady.connect(self.on_data_ready)
         self.opening_process.errorOcurred.connect(self.errorOcurred.emit)
@@ -231,6 +269,7 @@ class OpeningExplorerLogic(QtWidgets.QWidget):
 
     def send_fen(self, fen):
         self.opening_process.start(fen)
+
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)

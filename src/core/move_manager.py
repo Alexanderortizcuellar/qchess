@@ -105,6 +105,15 @@ class MoveManager(QObject):
         pass
 
     def get_pgn(self):
+        from datetime import date
+        
+        # Update headers if they are default or missing
+        if self.game.headers.get("Event", "?") == "?":
+            self.game.headers["Event"] = "Chess Analysis"
+        
+        if self.game.headers.get("Date", "????.??.??") == "????.??.??":
+            self.game.headers["Date"] = date.today().strftime("%Y.%m.%d")
+            
         return str(self.game)
 
     def create_mapping(self):

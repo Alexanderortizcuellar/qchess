@@ -1,5 +1,5 @@
 import re
-from typing import Literal, Dict, Any, List
+from typing import Literal, Any
 
 from PyQt5 import QtCore
 
