@@ -33,18 +33,11 @@ class SettingsDialog(QDialog):
         self.anim_duration.setSuffix(" ms")
         self.anim_duration.setSingleStep(50)
         board_form.addRow("Animation Duration:", self.anim_duration)
+
+        self.figurine_font_cb = QCheckBox("Use Chess Figurine Font")
+        board_form.addRow(self.figurine_font_cb)
         
         layout.addWidget(board_group)
-        
-        # --- Engine Settings ---
-        engine_group = QGroupBox("Engine Settings")
-        engine_form = QFormLayout(engine_group)
-        
-        self.engine_depth = QSpinBox()
-        self.engine_depth.setRange(1, 40)
-        engine_form.addRow("Default Analysis Depth:", self.engine_depth)
-        
-        layout.addWidget(engine_group)
         
         # --- Buttons ---
         buttons = QHBoxLayout()
@@ -68,14 +61,14 @@ class SettingsDialog(QDialog):
         anim_dur = int(self.settings.value("animation_duration", 200))
         self.anim_duration.setValue(anim_dur)
         
-        depth = int(self.settings.value("analysis_depth", 20))
-        self.engine_depth.setValue(depth)
+        use_figurine = self.settings.value("use_figurine_font", True, type=bool)
+        self.figurine_font_cb.setChecked(use_figurine)
 
     def save_settings(self):
         self.settings.setValue("board_theme", self.theme_combo.currentText())
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
-        self.settings.setValue("analysis_depth", self.engine_depth.value())
+        self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
         self.accept()
 
     def get_settings(self):
@@ -83,5 +76,5 @@ class SettingsDialog(QDialog):
             "board_theme": self.theme_combo.currentText(),
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
-            "analysis_depth": self.engine_depth.value()
+            "use_figurine_font": self.figurine_font_cb.isChecked()
         }

@@ -18,6 +18,8 @@ class AnalysisWidget(QWidget):
 
         # Analysis data storage
         self.analysis_lines = {} # multipv index -> info dict
+        self.is_dark = True
+        self.last_board_fen = None
 
         # --- Header Bar ---
         self.header_frame = QFrame()
@@ -53,6 +55,7 @@ class AnalysisWidget(QWidget):
         self.set_theme(True) # Default dark
 
     def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
         if is_dark:
             self.header_frame.setStyleSheet("QFrame#AnalysisHeader { background-color: #262421; border-radius: 3px; }")
             self.check_analysis.setStyleSheet("color: #bababa; font-weight: bold;")
@@ -81,6 +84,7 @@ class AnalysisWidget(QWidget):
                     font-size: 14px;
                 }
             """)
+        self.render_html()
 
     def set_depth(self, depth: str):
         text = depth.replace("=", " ")
@@ -94,23 +98,19 @@ class AnalysisWidget(QWidget):
         except ValueError:
             self.score_label.setText(score)
 
-    def update_analysis(self, info: dict, board_fen: str = None):
-        """Update analysis lines with new info."""
-        multipv = info.get("multipv", 1)
-        
-        self.analysis_lines[multipv] = info
-        
-        # Sort and render
+    def render_html(self):
+        if not self.analysis_lines:
+            return
+            
         sorted_indices = sorted(self.analysis_lines.keys())
         
         import chess
-        board = chess.Board(board_fen) if board_fen else None
+        board = chess.Board(self.last_board_fen) if self.last_board_fen else None
         turn = board.turn if board else chess.WHITE
 
-        is_dark = self.header_frame.styleSheet().find("#262421") != -1
-        bg_color = "#312e2b" if is_dark else "#f5f5f5"
-        text_color = "#bababa" if is_dark else "#312e2b"
-        border_color = "#3d3a37" if is_dark else "#e1e1e1"
+        bg_color = "#312e2b" if self.is_dark else "#f5f5f5"
+        text_color = "#bababa" if self.is_dark else "#312e2b"
+        border_color = "#3d3a37" if self.is_dark else "#e1e1e1"
 
         html = f"""
         <style>
@@ -137,7 +137,6 @@ class AnalysisWidget(QWidget):
             if board:
                 temp_board = board.copy()
                 formatted_moves = []
-                # Only show move numbers for the first move if it's black's turn to move
                 is_first = True
                 for move_uci in pv_moves[:12]:
                     try:
@@ -171,10 +170,23 @@ class AnalysisWidget(QWidget):
             """
 
         self.lines_display.setHtml(html)
+
+    def update_analysis(self, info: dict, board_fen: str = None):
+        """Update analysis lines with new info."""
+        multipv = info.get("multipv", 1)
+        self.analysis_lines[multipv] = info
+        if board_fen:
+            self.last_board_fen = board_fen
+            
+        self.render_html()
         
         # Update top score if it's the first PV
         if multipv == 1:
+            import chess
+            board = chess.Board(self.last_board_fen) if self.last_board_fen else None
+            turn = board.turn if board else chess.WHITE
             self.set_score(self.format_score(info, raw=True, turn=turn))
+
 
     def reset_lines(self):
         """Clear the current analysis lines data."""

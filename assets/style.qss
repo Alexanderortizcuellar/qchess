@@ -170,3 +170,30 @@ QWidget#chessboard_editor QPushButton:checked {
     background: #403d39;
     border: 1px solid #e6912c;
 }
+
+/* --- Table Widget --- */
+QTableWidget {
+    background-color: #262421;
+    color: #bababa;
+    gridline-color: #403d39;
+    border: 1px solid #403d39;
+    border-radius: 3px;
+}
+
+QTableWidget::item {
+    padding: 5px;
+}
+
+QTableWidget::item:selected {
+    background-color: #e6912c;
+    color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #21201d;
+    color: #bababa;
+    padding: 6px;
+    border: 1px solid #403d39;
+    font-weight: bold;
+}
+

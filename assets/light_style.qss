@@ -156,3 +156,30 @@ QToolBar {
     spacing: 5px;
     padding: 3px;
 }
+
+/* --- Table Widget --- */
+QTableWidget {
+    background-color: #ffffff;
+    color: #312e2b;
+    gridline-color: #ccc;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+QTableWidget::item {
+    padding: 5px;
+}
+
+QTableWidget::item:selected {
+    background-color: #e6912c;
+    color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #e1e1e1;
+    color: #312e2b;
+    padding: 6px;
+    border: 1px solid #ccc;
+    font-weight: bold;
+}
+

@@ -35,7 +35,9 @@ from gui.dialogs.board_editor import BoardEditorDlg
 from gui.dialogs.engine_dlg import EngineConfigDialog
 from gui.dialogs.pgn_import_dlg import PGNImportDlg
 from gui.dialogs.settings_dlg import SettingsDialog
+from gui.dialogs.pgn_headers_dlg import PGNHeadersDialog
 from core.opening_explorer import OpeningExplorerLogic
+
 
 
 class ChessApp(QMainWindow):
@@ -57,6 +59,7 @@ class ChessApp(QMainWindow):
                 self.figurine_font_family = "Noto Sans"
         else:
             self.figurine_font_family = "Noto Sans"
+        self.current_figurine_font = self.figurine_font_family
 
         self.move_manager = MoveManager()
         self.engine = ChessEngine("stockfish", self)
@@ -179,7 +182,8 @@ class ChessApp(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
 
         # Apply figurine font to PGN browser
-        self.browser.setStyleSheet(f"QTextBrowser {{font-size:20px; font-family: '{self.figurine_font_family}';}}")
+        self.browser.setStyleSheet(f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}")
+
 
         # 3. Opening Explorer Dock
         self.opxl = OpeningExplorerLogic(self)
@@ -212,9 +216,8 @@ class ChessApp(QMainWindow):
         load_fen_btn.clicked.connect(self.load_fen)
         save_pgn_btn.clicked.connect(self.save_pgn)
         clear_btn.clicked.connect(self.clear_pgn)
-        copy_pgn_btn.clicked.connect(
-            lambda _: self.copy_text(self.move_manager.get_pgn())
-        )
+        copy_pgn_btn.clicked.connect(lambda _: self.copy_pgn_action())
+
         self.move_manager.pgnChanged.connect(lambda _: self.display_pgn())
         self.browser.anchorClicked.connect(self.on_anchor_clicked)
         self.chessboard.fenChanged.connect(self.send_position)
@@ -253,15 +256,25 @@ class ChessApp(QMainWindow):
         save_action = _create_action(
             self, "Save", self.save_pgn, "Ctrl+S", icon_name="fa5s.save"
         )
+        copy_action = _create_action(
+            self, "Copy PGN", self.copy_pgn_action, "Ctrl+C", icon_name="fa5s.copy"
+        )
+        paste_pgn_action = _create_action(
+            self, "Paste PGN", self.paste_pgn, "Ctrl+V", icon_name="fa5s.paste"
+        )
+        edit_headers_action = _create_action(
+            self,
+            "Edit PGN Headers...",
+            self.edit_pgn_headers_action,
+            "Ctrl+H",
+            icon_name="fa5s.edit",
+        )
         export_img_action = _create_action(
             self,
             "Export Board Image",
             self.export_board_image,
             "Ctrl+I",
             icon_name="fa5s.image",
-        )
-        paste_pgn_action = _create_action(
-            self, "Paste PGN", self.paste_pgn, "Ctrl+V", icon_name="fa5s.paste"
         )
         settings_action = _create_action(
             self, "Settings", self.open_settings, "Ctrl+P", icon_name="fa5s.sliders-h"
@@ -303,8 +316,11 @@ class ChessApp(QMainWindow):
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
-        file_menu.addAction(export_img_action)
+        file_menu.addAction(copy_action)
         file_menu.addAction(paste_pgn_action)
+        file_menu.addAction(edit_headers_action)
+        file_menu.addSeparator()
+        file_menu.addAction(export_img_action)
         file_menu.addAction(settings_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
@@ -320,12 +336,15 @@ class ChessApp(QMainWindow):
             [
                 open_action,
                 save_action,
-                export_img_action,
+                copy_action,
                 paste_pgn_action,
+                edit_headers_action,
+                export_img_action,
                 engine_action,
                 settings_action,
             ]
         )
+
 
     def toggle_autoplay(self, checked: bool):
         if checked:
@@ -339,8 +358,9 @@ class ChessApp(QMainWindow):
         if self.move_manager.has_variations():
             variations = self.move_manager.get_current_node_variations()
             if len(variations) > 1 and (force_dialog or not self.autoplay_timer.isActive()):
-                dialog = VariationsDialog(variations, font_family=self.figurine_font_family)
+                dialog = VariationsDialog(variations, font_family=self.current_figurine_font)
                 if dialog.exec_() != QDialog.Accepted or dialog.selected_index is None:
+
                     return
                 self.move_manager.redo(dialog.selected_index)
             else:
@@ -389,6 +409,16 @@ class ChessApp(QMainWindow):
         )
         anim_dur = int(settings.value("animation_duration", 200))
         self.chessboard.board_view.set(animation={"duration": anim_dur})
+
+        use_figurine = settings.value("use_figurine_font", True, type=bool)
+        if use_figurine:
+            self.current_figurine_font = self.figurine_font_family
+        else:
+            self.current_figurine_font = "Noto Sans"
+        self.browser.setStyleSheet(
+            f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}"
+        )
+
 
     def set_style(self, style_name=None):
         if style_name is None:
@@ -524,13 +554,35 @@ class ChessApp(QMainWindow):
         if ok:
             self.move_manager.load_pgn_file(file)
 
+    def edit_pgn_headers(self, title="Edit PGN Headers") -> bool:
+        dlg = PGNHeadersDialog(self, self.move_manager.game.headers, title=title)
+        if dlg.exec_() == QDialog.Accepted:
+            new_headers = dlg.get_headers()
+            self.move_manager.game.headers.clear()
+            for k, v in new_headers.items():
+                self.move_manager.game.headers[k] = v
+            self.move_manager.create_mapping()
+            return True
+        return False
+
+    def edit_pgn_headers_action(self):
+        self.edit_pgn_headers(title="Edit PGN Headers")
+
+    def copy_pgn_action(self):
+        if self.edit_pgn_headers(title="Edit PGN Headers before Copying"):
+            self.copy_text(self.move_manager.get_pgn())
+            self.statusBar().showMessage("PGN copied to clipboard.")
+
     def save_pgn(self):
-        file, ok = QFileDialog.getSaveFileName(
-            self, "Save", ".", "Pgn Files (*.pgn);;All (*)"
-        )
-        if ok:
-            with open(file, "w") as f:
-                f.write(self.move_manager.get_pgn())
+        if self.edit_pgn_headers(title="Edit PGN Headers before Saving"):
+            file, ok = QFileDialog.getSaveFileName(
+                self, "Save", ".", "Pgn Files (*.pgn);;All (*)"
+            )
+            if ok:
+                with open(file, "w") as f:
+                    f.write(self.move_manager.get_pgn())
+                self.statusBar().showMessage(f"PGN saved to {file}")
+
 
     def export_board_image(self):
         file, ok = QFileDialog.getSaveFileName(
