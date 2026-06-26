@@ -283,8 +283,8 @@ class BoardEditorDlg(QDialog):
             try:
                 self.board_editor.board.set_fen(initial_fen)
                 self.board_editor.update_board_ui()
-            except:
-                pass
+            except Exception as e:
+                print(f"Error occurred while setting FEN: {e}")
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.addWidget(self.board_editor)
