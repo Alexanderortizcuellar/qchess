@@ -160,6 +160,20 @@ class EvalBar(QWidget):
         font_size = max(6, int(total_h * 0.035))
         if font_size > 11: font_size = 11
         
+        # Dynamically scale font size down if the text overflows the bar width
+        from PyQt5.QtGui import QFontMetrics
+        max_allowed_w = max(10, r.width() - 4)
+        while font_size > 5:
+            font = QFont("Arial", font_size, QFont.DemiBold)
+            metrics = QFontMetrics(font)
+            if hasattr(metrics, "horizontalAdvance"):
+                text_w = metrics.horizontalAdvance(self._score_text)
+            else:
+                text_w = metrics.width(self._score_text)
+            if text_w <= max_allowed_w:
+                break
+            font_size -= 1
+        
         bottom_is_white = white_on_bottom
         text_color = QColor(30, 30, 30) if bottom_is_white else QColor(230, 230, 230)
         p.setPen(text_color)

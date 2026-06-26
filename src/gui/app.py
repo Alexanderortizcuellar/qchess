@@ -1,9 +1,8 @@
 import re
 import sys
-from io import StringIO
 
-import chess.pgn
-from PyQt5.QtCore import QUrl, Qt, QTimer
+import chess
+from PyQt5.QtCore import QUrl, Qt, QTimer, QEvent
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -20,11 +19,9 @@ from PyQt5.QtWidgets import (
     QDockWidget,
     QAction,
     QSizePolicy,
-    QGridLayout,
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget
-from gui.widgets.eval_bar import EvalBar
 from gui.widgets.chessboard import ChessBoard
 from core.engine import ChessEngine
 from core.move_manager import MoveManager
@@ -39,17 +36,19 @@ from gui.dialogs.pgn_headers_dlg import PGNHeadersDialog
 from core.opening_explorer import OpeningExplorerLogic
 
 
-
 class ChessApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chess App")
-        
+
         # Load Figurine Font
         from PyQt5.QtGui import QFontDatabase
         import os
+
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        font_path = os.path.join(os.path.dirname(os.path.dirname(current_dir)), "assets", "SEMFIGB.TTF")
+        font_path = os.path.join(
+            os.path.dirname(os.path.dirname(current_dir)), "assets", "SEMFIGB.TTF"
+        )
         if os.path.exists(font_path):
             font_id = QFontDatabase.addApplicationFont(font_path)
             if font_id != -1:
@@ -182,8 +181,9 @@ class ChessApp(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
 
         # Apply figurine font to PGN browser
-        self.browser.setStyleSheet(f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}")
-
+        self.browser.setStyleSheet(
+            f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}"
+        )
 
         # 3. Opening Explorer Dock
         self.opxl = OpeningExplorerLogic(self)
@@ -219,6 +219,7 @@ class ChessApp(QMainWindow):
         copy_pgn_btn.clicked.connect(lambda _: self.copy_pgn_action())
 
         self.move_manager.pgnChanged.connect(lambda _: self.display_pgn())
+        self.move_manager.activeNodeChanged.connect(self.sync_board_to_pgn)
         self.browser.anchorClicked.connect(self.on_anchor_clicked)
         self.chessboard.fenChanged.connect(self.send_position)
         self.chessboard.fenChanged.connect(self.send_fen_to_opxl)
@@ -229,6 +230,11 @@ class ChessApp(QMainWindow):
             lambda depth: self.analysis_widget.set_depth(f"depth={depth}")
         )
         self.engine.moveFound.connect(self.on_best_move_found)
+
+        # Event filter for mouse wheel navigation on chessboard
+        self.chessboard.installEventFilter(self)
+        self.chessboard.board_view.installEventFilter(self)
+        self.chessboard.board_view.viewport().installEventFilter(self)
 
     def on_analysis_updated(self, info: dict):
         self.analysis_widget.update_analysis(info, self.chessboard.fen())
@@ -250,6 +256,7 @@ class ChessApp(QMainWindow):
 
     def init_menubar(self):
         file_menu = self.menuBar().addMenu("&File")
+        board_menu = self.menuBar().addMenu("&Board")
         open_action = _create_action(
             self, "Open", self.open_pgn, "Ctrl+O", icon_name="fa5s.folder-open"
         )
@@ -281,6 +288,16 @@ class ChessApp(QMainWindow):
         )
         quit_action = _create_action(
             self, "Quit", self.close, "Ctrl+Q", icon_name="fa5s.times-circle"
+        )
+
+        reset_board_action = _create_action(
+            self, "Reset Board", self.clear_pgn, "Ctrl+R", icon_name="fa5s.redo-alt"
+        )
+        setup_board_action = _create_action(
+            self, "Set Up Board...", self.setup_board, "Ctrl+Shift+S", icon_name="fa5s.chess-board"
+        )
+        copy_board_img_action = _create_action(
+            self, "Copy Board Image", self.copy_board_image, "Ctrl+Shift+C", icon_name="fa5s.copy"
         )
 
         engine_menu = self.menuBar().addMenu("&Engine")
@@ -325,6 +342,12 @@ class ChessApp(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
 
+        board_menu.addAction(reset_board_action)
+        board_menu.addAction(setup_board_action)
+        board_menu.addSeparator()
+        board_menu.addAction(export_img_action)
+        board_menu.addAction(copy_board_img_action)
+
         engine_menu.addAction(engine_action)
 
         view_menu.addAction(dark_action)
@@ -345,7 +368,6 @@ class ChessApp(QMainWindow):
             ]
         )
 
-
     def toggle_autoplay(self, checked: bool):
         if checked:
             self.autoplay_timer.start(1500)
@@ -354,13 +376,18 @@ class ChessApp(QMainWindow):
             self.autoplay_timer.stop()
             self.statusBar().showMessage("Autoplay Stopped")
 
-    def forward(self, force_dialog=False):
+    def forward(self, force_dialog=False, follow_mainline=False):
         if self.move_manager.has_variations():
             variations = self.move_manager.get_current_node_variations()
-            if len(variations) > 1 and (force_dialog or not self.autoplay_timer.isActive()):
-                dialog = VariationsDialog(variations, font_family=self.current_figurine_font)
+            if (
+                len(variations) > 1
+                and not follow_mainline
+                and (force_dialog or not self.autoplay_timer.isActive())
+            ):
+                dialog = VariationsDialog(
+                    variations, font_family=self.current_figurine_font
+                )
                 if dialog.exec_() != QDialog.Accepted or dialog.selected_index is None:
-
                     return
                 self.move_manager.redo(dialog.selected_index)
             else:
@@ -412,13 +439,17 @@ class ChessApp(QMainWindow):
 
         use_figurine = settings.value("use_figurine_font", True, type=bool)
         if use_figurine:
-            self.current_figurine_font = self.figurine_font_family
+            self.current_figurine_font = f"'{self.figurine_font_family}'"
         else:
-            self.current_figurine_font = "Noto Sans"
-        self.browser.setStyleSheet(
-            f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}"
-        )
+            self.current_figurine_font = "'Segoe UI', Arial, sans-serif"
+        
+        self.move_manager.font_family = self.current_figurine_font
+        self.move_manager.create_mapping()
+        self.display_pgn()
 
+        self.browser.setStyleSheet(
+            f"QTextBrowser {{font-size:20px; font-family: {self.current_figurine_font};}}"
+        )
 
     def set_style(self, style_name=None):
         if style_name is None:
@@ -482,6 +513,26 @@ class ChessApp(QMainWindow):
                 self.display_pgn()
                 self.chessboard.update_board(new_fen)
 
+    def setup_board(self):
+        dlg = BoardEditorDlg(self, initial_fen=self.chessboard.fen())
+        if dlg.exec_() == QDialog.Accepted:
+            new_fen = dlg.get_fen()
+            self.move_manager.load_fen(new_fen)
+            self.display_pgn()
+            self.chessboard.update_board(new_fen)
+
+    def copy_board_image(self):
+        pixmap = self.chessboard.grab()
+        QApplication.clipboard().setPixmap(pixmap)
+        self.statusBar().showMessage("Board image copied to clipboard.")
+
+    def sync_board_to_pgn(self):
+        node = self.move_manager.current_node
+        last_move = node.move if hasattr(node, "move") and node.move else None
+        self.chessboard.update_board(
+            self.move_manager.get_board().fen(), last_move
+        )
+
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())
         if match:
@@ -524,11 +575,19 @@ class ChessApp(QMainWindow):
             self.analysis_widget.reset_lines()
             from PyQt5.QtCore import QSettings
 
-            settings = QSettings("TestChessApp", "Config")
-            depth = int(settings.value("analysis_depth", 20))
-            self.engine.send_position(
-                self.chessboard.fen(), "depth", options={"depth": depth}
-            )
+            settings = QSettings("TestChessApp", "Engine")
+            use_time_limit = settings.value("use_time_limit", False, type=bool)
+            depth = int(settings.value("depth", 20))
+            time_limit = int(settings.value("time_limit", 1000))
+
+            if not use_time_limit:
+                self.engine.send_position(
+                    self.chessboard.fen(), "depth", options={"depth": depth}
+                )
+            else:
+                self.engine.send_position(
+                    self.chessboard.fen(), "time", options={"time": time_limit}
+                )
 
     def open_engine_config(self):
         dlg = EngineConfigDialog(self)
@@ -583,7 +642,6 @@ class ChessApp(QMainWindow):
                     f.write(self.move_manager.get_pgn())
                 self.statusBar().showMessage(f"PGN saved to {file}")
 
-
     def export_board_image(self):
         file, ok = QFileDialog.getSaveFileName(
             self,
@@ -597,6 +655,22 @@ class ChessApp(QMainWindow):
 
     def copy_text(self, text: str):
         QApplication.clipboard().setText(text)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Wheel:
+            if watched in (
+                self.chessboard,
+                self.chessboard.board_view,
+                self.chessboard.board_view.viewport(),
+            ):
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self.forward(follow_mainline=True)
+                elif delta < 0:
+                    self.backward()
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def closeEvent(self, a0):
         if (

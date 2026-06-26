@@ -81,12 +81,15 @@ class HtmlExporterMixin:
         comments: bool = True,
         variations: bool = True,
         highlight_index: Optional[int] = None,
+        font_family: str = "sans-serif",
     ):
         self.columns = columns
         self.headers = headers
         self.comments = comments
         self.variations = variations
         self.highlight_index = highlight_index
+        self.font_family = font_family
+
 
         self.force_movenumber = True
         self.variation_depth = 0
@@ -184,33 +187,35 @@ class HtmlExporterMixin:
 
 class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
     def result(self) -> str:
-        light_style = """
+        light_style = f"""
         <style>
-        .move {display: inline; }
-            .num { color: #757575; font-weight: bold; margin-right: 2px; }
-            .mv { color: #1A1A1A; text-decoration: none; padding: 4px 2px; }
-            .mv:hover { background: #eef6ff; }
-            .mv.highlight { background: #FFF59D; color: #000; }
-            .cmt { color: #388E3C; font-style: italic; margin-left: 4px; }
-            .variation { color: #9aa0a6; }
-            .hdr { color: #555; font-family: monospace; }
-            .res { font-weight: bold; }
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; }}
+            .move {{display: inline; }}
+            .num {{ color: #757575; font-weight: bold; margin-right: 2px; }}
+            .mv {{ font-family: {self.font_family}; color: #1A1A1A; text-decoration: none; padding: 4px 2px; }}
+            .mv:hover {{ background: #eef6ff; }}
+            .mv.highlight {{ background: #FFF59D; color: #000; }}
+            .cmt {{ color: #388E3C; font-style: italic; margin-left: 4px; }}
+            .variation {{ color: #9aa0a6; }}
+            .hdr {{ color: #555; font-family: monospace; }}
+            .res {{ font-weight: bold; }}
         </style>
         """
-        dark_style = """
+        dark_style = f"""
             <style>
-                body { background-color: #121212; color: #E0E0E0; font-family: sans-serif; line-height: 1.6; }
-                .move { display: inline; }
-                .num { color: #9E9E9E; font-weight: bold; margin-right: 2px; }
-                .mv { color: #BB86FC; text-decoration: none; padding: 4px 2px; }
-                .mv:hover { background: #2A2A2A; }
-                .mv.highlight { background: #4DB6AC; color: #000; }
-                .cmt { color: #03DAC6; font-style: italic; margin-left: 4px; }
-                .variation { color: #B0BEC5; font-style: italic; }
-                .hdr { color: #8D99AE; font-family: monospace; }
-                .res { color: #FFB74D; font-weight: bold; }
+                body {{ background-color: #121212; color: #E0E0E0; font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; line-height: 1.6; }}
+                .move {{ display: inline; }}
+                .num {{ color: #9E9E9E; font-weight: bold; margin-right: 2px; }}
+                .mv {{ font-family: {self.font_family}; color: #BB86FC; text-decoration: none; padding: 4px 2px; }}
+                .mv:hover {{ background: #2A2A2A; }}
+                .mv.highlight {{ background: #4DB6AC; color: #000; }}
+                .cmt {{ color: #03DAC6; font-style: italic; margin-left: 4px; }}
+                .variation {{ color: #B0BEC5; font-style: italic; }}
+                .hdr {{ color: #8D99AE; font-family: monospace; }}
+                .res {{ color: #FFB74D; font-weight: bold; }}
             </style>
             """
+
 
         style = dark_style if self.dark_mode else light_style
         return style + "<div class='moves'>" + " ".join(self.parts) + "</div>"
@@ -222,13 +227,13 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
         self.dark_mode = is_dark_style
 
 
-def pgn_to_html(game: chess.pgn.Game, highlight_node: Optional[chess.pgn.GameNode] = None, style: bool = False):
+def pgn_to_html(game: chess.pgn.Game, highlight_node: Optional[chess.pgn.GameNode] = None, style: bool = False, font_family: str = "sans-serif"):
     nodes = flatten_nodes_pgn_order(game)
     highlight_index = None
     if highlight_node is not None:
         highlight_index = getattr(highlight_node, "flat_index", None)
         
-    exporter = HtmlExporter(variations=True, comments=True, headers=False, highlight_index=highlight_index)
+    exporter = HtmlExporter(variations=True, comments=True, headers=False, highlight_index=highlight_index, font_family=font_family)
     exporter.set_style(style)
     data = game.accept(exporter)
     return data, nodes

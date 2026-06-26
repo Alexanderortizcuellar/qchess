@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QGroupBox,
+    QRadioButton,
+    QButtonGroup,
 )
 from PyQt5.QtCore import QSettings
 
@@ -48,8 +50,22 @@ class EngineConfigDialog(QDialog):
         self.threads = QSpinBox()
         self.threads.setRange(1, 128)
 
+        self.radio_depth = QRadioButton("Depth:")
+        self.radio_time = QRadioButton("Time Limit:")
+        
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.radio_depth)
+        self.mode_group.addButton(self.radio_time)
+        
+        self.radio_depth.toggled.connect(self.on_mode_toggled)
+
         self.depth = QSpinBox()
         self.depth.setRange(1, 99)
+
+        self.time_limit = QSpinBox()
+        self.time_limit.setRange(100, 60000)
+        self.time_limit.setSingleStep(100)
+        self.time_limit.setSuffix(" ms")
 
         self.multipv = QSpinBox()
         self.multipv.setRange(1, 50)
@@ -59,7 +75,8 @@ class EngineConfigDialog(QDialog):
         self.hash.setSuffix(" MB")
 
         s_form.addRow("Threads:", self.threads)
-        s_form.addRow("Depth:", self.depth)
+        s_form.addRow(self.radio_depth, self.depth)
+        s_form.addRow(self.radio_time, self.time_limit)
         s_form.addRow("Lines (MultiPV):", self.multipv)
         s_form.addRow("Hash:", self.hash)
 
@@ -114,11 +131,24 @@ class EngineConfigDialog(QDialog):
         if path:
             self.syzygy_path.setText(path)
 
+    def on_mode_toggled(self):
+        is_depth = self.radio_depth.isChecked()
+        self.depth.setEnabled(is_depth)
+        self.time_limit.setEnabled(not is_depth)
+
     # ───────────── Settings
     def load(self):
         self.engine_path.setText(self.settings.value("path", ""))
         self.threads.setValue(int(self.settings.value("threads", 4)))
         self.depth.setValue(int(self.settings.value("depth", 20)))
+        
+        use_time = self.settings.value("use_time_limit", False, bool)
+        self.radio_time.setChecked(use_time)
+        self.radio_depth.setChecked(not use_time)
+        self.depth.setEnabled(not use_time)
+        self.time_limit.setEnabled(use_time)
+            
+        self.time_limit.setValue(int(self.settings.value("time_limit", 1000)))
         self.multipv.setValue(int(self.settings.value("multipv", 1)))
         self.hash.setValue(int(self.settings.value("hash", 1024)))
         self.skill.setValue(int(self.settings.value("skill", 20)))
@@ -129,6 +159,10 @@ class EngineConfigDialog(QDialog):
         self.settings.setValue("path", self.engine_path.text())
         self.settings.setValue("threads", self.threads.value())
         self.settings.setValue("depth", self.depth.value())
+        
+        self.settings.setValue("use_time_limit", self.radio_time.isChecked())
+        self.settings.setValue("time_limit", self.time_limit.value())
+        
         self.settings.setValue("multipv", self.multipv.value())
         self.settings.setValue("hash", self.hash.value())
         self.settings.setValue("skill", self.skill.value())
@@ -141,6 +175,8 @@ class EngineConfigDialog(QDialog):
             "path": self.engine_path.text(),
             "threads": self.threads.value(),
             "depth": self.depth.value(),
+            "use_time_limit": self.radio_time.isChecked(),
+            "time_limit": self.time_limit.value(),
             "multipv": self.multipv.value(),
             "hash": self.hash.value(),
             "skill": self.skill.value(),

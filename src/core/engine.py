@@ -100,7 +100,7 @@ class ChessEngine(QtCore.QProcess):
         if mode == "depth":
             self.send_command(f"go depth {options.get('depth', 20)}")
         elif mode == "time":
-            self.send_command(f"go time {options.get('time', 1000)}")
+            self.send_command(f"go movetime {options.get('time', 1000)}")
         else:
             self.send_command("go infinite")
 

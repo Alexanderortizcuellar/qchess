@@ -9,11 +9,13 @@ from core.pgn_to_html import pgn_to_html
 
 class MoveManager(QObject):
     pgnChanged = pyqtSignal(str)
+    activeNodeChanged = pyqtSignal()
 
     def __init__(self, pgn_str: str | None = None):
         super().__init__()
         self.html, self.nodes = "", []
         self.html_style = False  # True for dark theme
+        self.font_family = "sans-serif"
         self.game = chess.pgn.Game()
         if pgn_str:
             self.update_pgn(pgn_str)
@@ -117,8 +119,9 @@ class MoveManager(QObject):
         return str(self.game)
 
     def create_mapping(self):
-        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style)
+        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style, self.font_family)
         self.pgnChanged.emit(self.get_pgn())
+        self.activeNodeChanged.emit()
 
 
     def add_comment(self, index: int, comment: str):
