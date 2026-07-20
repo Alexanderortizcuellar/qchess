@@ -39,6 +39,14 @@ class SettingsDialog(QDialog):
         
         layout.addWidget(board_group)
         
+        # --- Mode Settings ---
+        mode_group = QGroupBox("Application Mode")
+        mode_form = QFormLayout(mode_group)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["Analysis Mode", "Game / Train Mode"])
+        mode_form.addRow("Mode:", self.mode_combo)
+        layout.addWidget(mode_group)
+        
         # --- Buttons ---
         buttons = QHBoxLayout()
         save_btn = QPushButton("Save")
@@ -64,11 +72,15 @@ class SettingsDialog(QDialog):
         use_figurine = self.settings.value("use_figurine_font", True, type=bool)
         self.figurine_font_cb.setChecked(use_figurine)
 
+        mode = self.settings.value("app_mode", "Analysis Mode")
+        self.mode_combo.setCurrentText(mode)
+
     def save_settings(self):
         self.settings.setValue("board_theme", self.theme_combo.currentText())
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
+        self.settings.setValue("app_mode", self.mode_combo.currentText())
         self.accept()
 
     def get_settings(self):
@@ -76,5 +88,6 @@ class SettingsDialog(QDialog):
             "board_theme": self.theme_combo.currentText(),
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
-            "use_figurine_font": self.figurine_font_cb.isChecked()
+            "use_figurine_font": self.figurine_font_cb.isChecked(),
+            "app_mode": self.mode_combo.currentText()
         }

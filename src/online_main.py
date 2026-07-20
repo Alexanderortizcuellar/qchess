@@ -2,7 +2,6 @@ import sys
 import os
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt
 
 # Add src and root to path
 current_dir = os.path.dirname(os.path.abspath(__file__))

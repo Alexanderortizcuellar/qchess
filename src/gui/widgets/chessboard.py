@@ -110,18 +110,19 @@ class ChessBoard(QtWidgets.QWidget):
 
     def _on_move_made(self, move: chess.Move):
         # Handle promotion if needed
-        piece = self._internal_board.piece_at(move.from_square)
-        if piece and piece.piece_type == chess.PAWN:
-            if (chess.square_rank(move.to_square) == 7 and piece.color == chess.WHITE) or \
-               (chess.square_rank(move.to_square) == 0 and piece.color == chess.BLACK):
-                
-                # Show dialog to let the user choose.
-                dialog = PromotionDialog(piece.color, self)
-                self._selected_promo = chess.QUEEN
-                def set_promo(t): self._selected_promo = t
-                dialog.pieceSelected.connect(set_promo)
-                dialog.exec_()
-                move.promotion = self._selected_promo
+        if move.promotion is None:
+            piece = self._internal_board.piece_at(move.from_square)
+            if piece and piece.piece_type == chess.PAWN:
+                if (chess.square_rank(move.to_square) == 7 and piece.color == chess.WHITE) or \
+                   (chess.square_rank(move.to_square) == 0 and piece.color == chess.BLACK):
+                    
+                    # Show dialog to let the user choose.
+                    dialog = PromotionDialog(piece.color, self)
+                    self._selected_promo = chess.QUEEN
+                    def set_promo(t): self._selected_promo = t
+                    dialog.pieceSelected.connect(set_promo)
+                    dialog.exec_()
+                    move.promotion = self._selected_promo
 
         uci = move.uci()
         if move in self._internal_board.legal_moves:

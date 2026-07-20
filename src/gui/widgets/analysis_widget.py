@@ -1,11 +1,12 @@
 import sys
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel,
-                             QTextBrowser, QVBoxLayout, QWidget, QFrame)
+                             QTextBrowser, QVBoxLayout, QWidget, QFrame, QPushButton)
 
 class AnalysisWidget(QWidget):
     evaluationToggled = pyqtSignal(bool)
+    configClicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,7 +30,17 @@ class AnalysisWidget(QWidget):
         
         self.check_analysis = QCheckBox("Engine")
         self.check_analysis.setCursor(Qt.PointingHandCursor)
-        self.check_analysis.toggled.connect(lambda v: self.evaluationToggled.emit(v))
+        self.check_analysis.toggled.connect(self.on_checkbox_toggled)
+        
+        from utils.helpers import _qicon
+        self.btn_config = QPushButton()
+        self.btn_config.setObjectName("SmallIconButton")
+        self.btn_config.setProperty("icon_name", "fa6s.gear")
+        self.btn_config.setIcon(_qicon("fa6s.gear", is_dark=self.is_dark))
+        self.btn_config.setIconSize(QSize(16, 16))
+        self.btn_config.setCursor(Qt.PointingHandCursor)
+        self.btn_config.setToolTip("Engine Config")
+        self.btn_config.clicked.connect(self.configClicked.emit)
         
         self.score_label = QLabel("0.00")
         self.score_label.setFont(QFont("Arial", 10, QFont.Bold))
@@ -39,6 +50,7 @@ class AnalysisWidget(QWidget):
         self.depth_label.setFont(QFont("Arial", 8))
         
         self.header_layout.addWidget(self.check_analysis)
+        self.header_layout.addWidget(self.btn_config)
         self.header_layout.addSpacing(10)
         self.header_layout.addWidget(self.score_label)
         self.header_layout.addStretch()
@@ -56,6 +68,9 @@ class AnalysisWidget(QWidget):
 
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
+        if hasattr(self, "btn_config"):
+            from utils.helpers import _qicon
+            self.btn_config.setIcon(_qicon("fa6s.gear", is_dark=is_dark))
         if is_dark:
             self.header_frame.setStyleSheet("QFrame#AnalysisHeader { background-color: #262421; border-radius: 3px; }")
             self.check_analysis.setStyleSheet("color: #bababa; font-weight: bold;")
@@ -97,6 +112,13 @@ class AnalysisWidget(QWidget):
             self.score_label.setText(f"{prefix}{val:.2f}")
         except ValueError:
             self.score_label.setText(score)
+
+    def on_checkbox_toggled(self, checked: bool):
+        if checked:
+            self.lines_display.setPlaceholderText("")
+        else:
+            self.lines_display.setPlaceholderText("Enable engine for analysis...")
+        self.evaluationToggled.emit(checked)
 
     def render_html(self):
         if not self.analysis_lines:
@@ -173,8 +195,15 @@ class AnalysisWidget(QWidget):
 
     def update_analysis(self, info: dict, board_fen: str = None):
         """Update analysis lines with new info."""
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Engine")
+        multipv_limit = int(settings.value("multipv", 1))
+
+        self.analysis_lines = {k: v for k, v in self.analysis_lines.items() if k <= multipv_limit}
+
         multipv = info.get("multipv", 1)
-        self.analysis_lines[multipv] = info
+        if multipv <= multipv_limit:
+            self.analysis_lines[multipv] = info
         if board_fen:
             self.last_board_fen = board_fen
             
@@ -187,11 +216,40 @@ class AnalysisWidget(QWidget):
             turn = board.turn if board else chess.WHITE
             self.set_score(self.format_score(info, raw=True, turn=turn))
 
+    def update_analysis_batch(self, infos: list, board_fen: str = None):
+        """Update multiple analysis lines and render once."""
+        if board_fen:
+            self.last_board_fen = board_fen
+            
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Engine")
+        multipv_limit = int(settings.value("multipv", 1))
+
+        self.analysis_lines = {k: v for k, v in self.analysis_lines.items() if k <= multipv_limit}
+
+        for info in infos:
+            multipv = info.get("multipv", 1)
+            if multipv <= multipv_limit:
+                self.analysis_lines[multipv] = info
+            
+        self.render_html()
+        
+        # Update top score if it's the first PV
+        multipv_1_info = self.analysis_lines.get(1)
+        if multipv_1_info:
+            import chess
+            board = chess.Board(self.last_board_fen) if self.last_board_fen else None
+            turn = board.turn if board else chess.WHITE
+            self.set_score(self.format_score(multipv_1_info, raw=True, turn=turn))
+
+
 
     def reset_lines(self):
         """Clear the current analysis lines data."""
         self.analysis_lines.clear()
         self.lines_display.clear()
+        self.score_label.setText("")
+        self.depth_label.setText("")
 
     def format_score(self, info: dict, raw=False, turn=None) -> str:
         import chess

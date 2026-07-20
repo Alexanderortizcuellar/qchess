@@ -16,6 +16,11 @@ class ChessEngine(QtCore.QProcess):
         self.setProgram(self.engine_path)
         self.readyReadStandardOutput.connect(self.read_data)
         self.analysis_data = {}
+        self.current_analyzing_fen = None
+        self.searching = False
+        self.next_analyzing_fen = None
+        self.next_mode = "depth"
+        self.next_options = {"depth": 20}
 
     def read_data(self):
         try:
@@ -35,6 +40,17 @@ class ChessEngine(QtCore.QProcess):
                 match = re.search(r"bestmove\s+(\S+)", line)
                 if match:
                     self.moveFound.emit(match.group(1))
+                if self.next_analyzing_fen is not None:
+                    next_fen = self.next_analyzing_fen
+                    next_mode = self.next_mode
+                    next_opts = self.next_options
+                    
+                    self.current_analyzing_fen = next_fen
+                    self.next_analyzing_fen = None
+                    self.searching = True
+                    self._start_search(next_fen, next_mode, next_opts)
+                else:
+                    self.searching = False
                 continue
 
             if line.startswith("info"):
@@ -79,6 +95,7 @@ class ChessEngine(QtCore.QProcess):
 
         if score_type and pv_moves:
             info = {
+                "fen": self.current_analyzing_fen,
                 "multipv": multipv,
                 "score_type": score_type,
                 "score_value": score_value,
@@ -96,6 +113,18 @@ class ChessEngine(QtCore.QProcess):
         if options is None:
             options = {"depth": 20}
         
+        if self.searching:
+            self.next_analyzing_fen = position
+            self.next_mode = mode
+            self.next_options = options
+            self.send_command("stop")
+        else:
+            self.current_analyzing_fen = position
+            self.next_analyzing_fen = None
+            self.searching = True
+            self._start_search(position, mode, options)
+
+    def _start_search(self, position: str, mode: str, options: dict):
         self.send_command(f"position fen {position}")
         if mode == "depth":
             self.send_command(f"go depth {options.get('depth', 20)}")
@@ -104,11 +133,20 @@ class ChessEngine(QtCore.QProcess):
         else:
             self.send_command("go infinite")
 
+    def stop_search(self):
+        self.next_analyzing_fen = None
+        self.searching = False
+        self.send_command("stop")
+
     def set_settings(self, settings: dict):
         # settings keys: path, threads, hash, multipv, etc.
         is_running = self.is_running()
         if is_running:
             self.quit()
+        
+        self.searching = False
+        self.next_analyzing_fen = None
+        self.current_analyzing_fen = None
         
         self.engine_path = settings.get("path", self.engine_path)
         self.setProgram(self.engine_path)
@@ -136,6 +174,9 @@ class ChessEngine(QtCore.QProcess):
             self.write(f"{command}\n".encode())
 
     def quit(self):
+        self.searching = False
+        self.next_analyzing_fen = None
+        self.current_analyzing_fen = None
         if self.state() == QtCore.QProcess.Running:
             self.send_command("quit")
             if not self.waitForFinished(2000):

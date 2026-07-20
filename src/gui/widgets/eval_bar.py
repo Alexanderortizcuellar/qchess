@@ -34,6 +34,8 @@ class EvalBar(QWidget):
         self._anim = QPropertyAnimation(self, b"whiteShare")
         self._anim.setDuration(700)
         self._anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self._score_font = QFont("Arial", 9, QFont.DemiBold)
+        self._font_size = 9
 
     # --- sizing -----------------------------------------------------------------
     def sizeHint(self):
@@ -67,6 +69,7 @@ class EvalBar(QWidget):
     def setFlipped(self, flipped: bool):
         """Swap which color is on top/bottom (visual only)."""
         self._flipped = bool(flipped)
+        self._update_font_size()
         self.update()
 
     # --- scoring API ------------------------------------------------------------
@@ -75,16 +78,18 @@ class EvalBar(QWidget):
         Expected inputs:
           - {'type': 'cp', 'value': int}    # + => white better, - => black better
           - {'type': 'mate', 'value': int}  # +N => white mates in N, -N => black mates in N
+          - {'type': 'checkmate', 'winner': str} # winner: 'white' or 'black'
+          - {'type': 'draw'}
         """
         stype = score.get("type")
-        sval = int(score.get("value", 0))
         if stype == "cp":
+            sval = int(score.get("value", 0))
             # Clamp and map with a smooth logistic so motion is pleasing
             cp = max(-2000, min(2000, sval))
             white_share = 1.0 / (1.0 + math.exp(-cp / self._cp_scale))
-            self._score_text = f"{cp/100:+.2f}"  # show from white's POV, "+0.75" etc.
+            self._score_text = f"{cp/100:+.2f}"
         elif stype == "mate":
-            # "All inclined" to the mating color, as requested
+            sval = int(score.get("value", 0))
             if sval > 0:
                 white_share = 1.0
                 self._score_text = f"+M{abs(sval)}"
@@ -94,12 +99,56 @@ class EvalBar(QWidget):
             else:
                 white_share = 0.5
                 self._score_text = "M0"
+        elif stype == "checkmate":
+            winner = score.get("winner")
+            if winner == "white":
+                white_share = 1.0
+                self._score_text = "#"
+            elif winner == "black":
+                white_share = 0.0
+                self._score_text = "#"
+            else:
+                white_share = 0.5
+                self._score_text = "#"
+        elif stype == "draw":
+            white_share = 0.5
+            self._score_text = "1/2"
         else:
             white_share = 0.5
             self._score_text = "+0.00"
 
+        self._update_font_size()
         self._animateTo(white_share)
         self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_font_size()
+
+    def _update_font_size(self):
+        r = self.rect()
+        total_h = r.height()
+        if total_h <= 0 or r.width() <= 0:
+            return
+            
+        font_size = max(6, int(total_h * 0.035))
+        if font_size > 11: font_size = 11
+        
+        from PyQt5.QtGui import QFontMetrics
+        max_allowed_w = max(10, r.width() - 4)
+        while font_size > 5:
+            font = QFont("Arial", font_size, QFont.DemiBold)
+            metrics = QFontMetrics(font)
+            if hasattr(metrics, "horizontalAdvance"):
+                text_w = metrics.horizontalAdvance(self._score_text)
+            else:
+                text_w = metrics.width(self._score_text)
+            if text_w <= max_allowed_w:
+                break
+            font_size -= 1
+            
+        self._score_font = QFont("Arial", font_size, QFont.DemiBold)
+        self._font_size = font_size
 
     # --- animation helper -------------------------------------------------------
     def _animateTo(self, v: float):
@@ -156,28 +205,20 @@ class EvalBar(QWidget):
         p.setPen(QColor(120, 120, 120))
         p.drawRect(r.adjusted(0, 0, -1, -1))
 
-        # Score text: proportional font size
-        font_size = max(6, int(total_h * 0.035))
-        if font_size > 11: font_size = 11
+        # Score text: cached proportional font size
+        font_size = self._font_size
         
-        # Dynamically scale font size down if the text overflows the bar width
-        from PyQt5.QtGui import QFontMetrics
-        max_allowed_w = max(10, r.width() - 4)
-        while font_size > 5:
-            font = QFont("Arial", font_size, QFont.DemiBold)
-            metrics = QFontMetrics(font)
-            if hasattr(metrics, "horizontalAdvance"):
-                text_w = metrics.horizontalAdvance(self._score_text)
-            else:
-                text_w = metrics.width(self._score_text)
-            if text_w <= max_allowed_w:
-                break
-            font_size -= 1
-        
-        bottom_is_white = white_on_bottom
+        # Determine if the background at the bottom (where text is rendered) is white or black.
+        # We use a threshold based on the font size to see if the bottom-most color block is large enough.
+        text_threshold = font_size + 4
+        if white_on_bottom:
+            bottom_is_white = (white_h >= text_threshold)
+        else:
+            bottom_is_white = (total_h - white_h < text_threshold)
+
         text_color = QColor(30, 30, 30) if bottom_is_white else QColor(230, 230, 230)
         p.setPen(text_color)
-        p.setFont(QFont("Arial", font_size, QFont.DemiBold))
+        p.setFont(self._score_font)
         p.drawText(
             r.adjusted(0, 0, 0, -2), Qt.AlignHCenter | Qt.AlignBottom, self._score_text
         )

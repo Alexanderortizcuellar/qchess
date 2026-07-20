@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget
+from gui.widgets.game_train_widget import GameTrainWidget
 from gui.widgets.chessboard import ChessBoard
 from core.engine import ChessEngine
 from core.move_manager import MoveManager
@@ -40,6 +41,7 @@ class ChessApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chess App")
+        self.is_dark = True
 
         # Load Figurine Font
         from PyQt5.QtGui import QFontDatabase
@@ -126,6 +128,34 @@ class ChessApp(QMainWindow):
         self.analysis_dock.setObjectName("analysis_dock")
         self.addDockWidget(Qt.RightDockWidgetArea, self.analysis_dock)
 
+        # Game / Train Widget (will be swapped into analysis_dock dynamically in Game / Train mode)
+        self.gametrain_widget = GameTrainWidget(self)
+
+        # Game/Train play state variables
+        self.play_mode = None
+        self.play_depth = 8
+        self.self_play_delay = 1000
+        self.self_play_timer = QTimer(self)
+        self.self_play_timer.timeout.connect(self.make_engine_vs_engine_move)
+
+        # Throttler for engine analysis updates to prevent lag/animation freezing
+        self.analysis_update_timer = QTimer(self)
+        self.analysis_update_timer.setSingleShot(True)
+        self.analysis_update_timer.setInterval(100)  # Update UI at most every 100ms
+        self.analysis_update_timer.timeout.connect(self.process_pending_analysis)
+        self.pending_analysis_info = {}
+        self.pending_analysis_fen = None
+
+        # Debounce timer for engine position updates during navigation
+        self.engine_debounce_timer = QTimer(self)
+        self.engine_debounce_timer.setSingleShot(True)
+        self.engine_debounce_timer.setInterval(150)  # 150ms debounce
+        self.engine_debounce_timer.timeout.connect(self.run_debounced_send_position)
+        
+        self.last_move_time = 0
+        self.has_received_first_update = False
+
+
         # 2. PGN & Navigation Dock
         self.browser = PGNBrowser(self, self.move_manager)
         self.navigation_layout = QHBoxLayout()
@@ -195,6 +225,7 @@ class ChessApp(QMainWindow):
 
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
         self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
+        QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
 
         # --- Toolbar & Menubar ---
         self.toolbar = QToolBar()
@@ -226,8 +257,14 @@ class ChessApp(QMainWindow):
         self.opxl.errorOcurred.connect(self.statusBar().showMessage)
 
         self.engine.analysisUpdated.connect(self.on_analysis_updated)
+        self.analysis_widget.configClicked.connect(self.open_engine_config)
+        self.gametrain_widget.gameStartRequested.connect(self.start_engine_game)
+        self.gametrain_widget.gameStopRequested.connect(self.stop_engine_game)
+        self.gametrain_widget.loadPresetRequested.connect(self.load_preset_position)
         self.engine.depthChanged.connect(
             lambda depth: self.analysis_widget.set_depth(f"depth={depth}")
+            if self.analysis_widget.check_analysis.isChecked()
+            else None
         )
         self.engine.moveFound.connect(self.on_best_move_found)
 
@@ -237,13 +274,50 @@ class ChessApp(QMainWindow):
         self.chessboard.board_view.viewport().installEventFilter(self)
 
     def on_analysis_updated(self, info: dict):
-        self.analysis_widget.update_analysis(info, self.chessboard.fen())
-        if info.get("multipv") == 1:
-            s_type = info.get("score_type")
-            s_val = info.get("score_value")
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Config")
+        if settings.value("app_mode", "Analysis Mode") == "Game / Train Mode":
+            return
+        if not self.analysis_widget.check_analysis.isChecked():
+            return
+        if self.move_manager.get_board().is_game_over():
+            return
+            
+        current_fen = self.chessboard.fen()
+        if info.get("fen") != current_fen:
+            return
+            
+        multipv = info.get("multipv", 1)
+        self.pending_analysis_info[multipv] = info
+        self.pending_analysis_fen = current_fen
+        
+        if not self.has_received_first_update:
+            self.has_received_first_update = True
+            self.process_pending_analysis()
+        else:
+            if not self.analysis_update_timer.isActive():
+                self.analysis_update_timer.start()
+
+    def process_pending_analysis(self):
+        if not self.pending_analysis_info:
+            return
+            
+        infos = list(self.pending_analysis_info.values())
+        fen = self.pending_analysis_fen
+        self.pending_analysis_info.clear()
+        
+        infos.sort(key=lambda x: x.get("multipv", 1))
+        
+        self.analysis_widget.update_analysis_batch(infos, fen)
+        
+        multipv_1_info = next((info for info in infos if info.get("multipv") == 1), None)
+        if multipv_1_info:
+            s_type = multipv_1_info.get("score_type")
+            s_val = multipv_1_info.get("score_value")
             white_pov_score = s_val
             if self.chessboard.turn == chess.BLACK:
                 white_pov_score = -s_val
+                
             if s_type == "mate":
                 self.bar.setEngineScore({"type": "mate", "value": white_pov_score})
                 self.bar.setToolTip(f"Mate in {white_pov_score}")
@@ -251,8 +325,69 @@ class ChessApp(QMainWindow):
                 self.bar.setEngineScore({"type": "cp", "value": white_pov_score})
                 self.bar.setToolTip(f"{white_pov_score / 100.0:+.2f}")
 
+    def clear_pending_analysis(self):
+        self.pending_analysis_info.clear()
+        self.pending_analysis_fen = None
+        self.analysis_update_timer.stop()
+        self.bar.setAnimationDuration(700)
+
+    def run_debounced_send_position(self):
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Engine")
+        current_fen = self.chessboard.fen()
+        
+        depth = int(settings.value("depth", 20))
+        use_time_limit = settings.value("use_time_limit", False, type=bool)
+        if use_time_limit:
+            time_limit = int(settings.value("time_limit", 1000))
+            self.engine.send_position(current_fen, "time", options={"time": time_limit})
+        else:
+            self.engine.send_position(current_fen, "depth", options={"depth": depth})
+
+    def get_game_over_reason(self, board) -> str:
+        if not board.is_game_over(claim_draw=True):
+            return ""
+        if board.is_checkmate():
+            return "Checkmate"
+        if board.is_stalemate():
+            return "Stalemate"
+        if board.is_insufficient_material():
+            return "Insufficient Material"
+        if board.is_seventyfive_moves() or board.can_claim_fifty_moves():
+            return "50-Move Rule"
+        if board.is_fivefold_repetition() or board.can_claim_threefold_repetition():
+            return "Repetition"
+        return "Game Over"
+
     def on_best_move_found(self, move_uci: str):
-        pass
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Config")
+        app_mode = settings.value("app_mode", "Analysis Mode")
+        
+        if app_mode == "Game / Train Mode" and self.gametrain_widget.playing:
+            try:
+                move = chess.Move.from_uci(move_uci)
+            except Exception:
+                self.gametrain_widget.update_status("Game Over")
+                self.gametrain_widget.stop_play()
+                return
+                
+            board = self.chessboard._internal_board
+            if move in board.legal_moves:
+                self.chessboard._on_move_made(move)
+                
+                reason = self.get_game_over_reason(board)
+                if reason:
+                    self.gametrain_widget.update_status(f"Game Over - {reason}")
+                    self.gametrain_widget.stop_play()
+                    return
+                
+                if self.play_mode == "Play as White":
+                    self.gametrain_widget.update_status("Your turn (White)")
+                elif self.play_mode == "Play as Black":
+                    self.gametrain_widget.update_status("Your turn (Black)")
+                elif self.play_mode == "Engine vs Engine":
+                    self.self_play_timer.start(self.self_play_delay)
 
     def init_menubar(self):
         file_menu = self.menuBar().addMenu("&File")
@@ -363,7 +498,6 @@ class ChessApp(QMainWindow):
                 paste_pgn_action,
                 edit_headers_action,
                 export_img_action,
-                engine_action,
                 settings_action,
             ]
         )
@@ -385,7 +519,7 @@ class ChessApp(QMainWindow):
                 and (force_dialog or not self.autoplay_timer.isActive())
             ):
                 dialog = VariationsDialog(
-                    variations, font_family=self.current_figurine_font
+                    variations, font_family=self.current_figurine_font, parent=self
                 )
                 if dialog.exec_() != QDialog.Accepted or dialog.selected_index is None:
                     return
@@ -436,6 +570,7 @@ class ChessApp(QMainWindow):
         )
         anim_dur = int(settings.value("animation_duration", 200))
         self.chessboard.board_view.set(animation={"duration": anim_dur})
+        self.bar.setAnimationDuration(anim_dur)
 
         use_figurine = settings.value("use_figurine_font", True, type=bool)
         if use_figurine:
@@ -451,6 +586,26 @@ class ChessApp(QMainWindow):
             f"QTextBrowser {{font-size:20px; font-family: {self.current_figurine_font};}}"
         )
 
+        # Application Mode Toggle
+        app_mode = settings.value("app_mode", "Analysis Mode")
+        if app_mode == "Game / Train Mode":
+            # Stop game mode play if it was running, then swap widget
+            self.gametrain_widget.stop_play()
+            self.analysis_dock.setWidget(self.gametrain_widget)
+            self.analysis_dock.setWindowTitle("Game / Train")
+            self.chessboard.set_eval_bar_visible(False)
+            self.engine.stop_search()
+        else:
+            # Stop game mode play if it was running, then swap widget
+            self.gametrain_widget.stop_play()
+            self.analysis_dock.setWidget(self.analysis_widget)
+            self.analysis_dock.setWindowTitle("Engine Analysis")
+            self.chessboard.set_eval_bar_visible(
+                self.analysis_widget.check_analysis.isChecked()
+            )
+            if self.analysis_widget.check_analysis.isChecked():
+                self.send_position(force=True)
+
     def set_style(self, style_name=None):
         if style_name is None:
             action = self.sender()
@@ -458,6 +613,7 @@ class ChessApp(QMainWindow):
                 style_name = action.text().lower()
             else:
                 return
+        self.is_dark = (style_name == "dark")
         import os
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -468,6 +624,7 @@ class ChessApp(QMainWindow):
             qss_file = os.path.join(assets_dir, "style.qss")
             self.move_manager.change_html_style(True)
             self.analysis_widget.set_theme(True)
+            self.gametrain_widget.set_theme(True)
             self.opxl.set_theme(True)
             from utils.helpers import update_widget_icons
 
@@ -476,6 +633,7 @@ class ChessApp(QMainWindow):
             qss_file = os.path.join(assets_dir, "light_style.qss")
             self.move_manager.change_html_style(False)
             self.analysis_widget.set_theme(False)
+            self.gametrain_widget.set_theme(False)
             self.opxl.set_theme(False)
             from utils.helpers import update_widget_icons
 
@@ -546,16 +704,113 @@ class ChessApp(QMainWindow):
         self.move_manager.make_move(move_uci)
         self.display_pgn()
 
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Config")
+        app_mode = settings.value("app_mode", "Analysis Mode")
+        if app_mode == "Game / Train Mode" and self.gametrain_widget.playing:
+            board = self.chessboard._internal_board
+            reason = self.get_game_over_reason(board)
+            if reason:
+                self.gametrain_widget.update_status(f"Game Over - {reason}")
+                self.gametrain_widget.stop_play()
+                return
+            
+            is_engine_turn = False
+            if self.play_mode == "Play as White" and board.turn == chess.BLACK:
+                is_engine_turn = True
+            elif self.play_mode == "Play as Black" and board.turn == chess.WHITE:
+                is_engine_turn = True
+            
+            if is_engine_turn:
+                # Use a singleShot delay to let the board finish its slide animation smoothly
+                QTimer.singleShot(250, self.trigger_engine_play)
+
+    def start_engine_game(self, mode: str, depth: int, delay_ms: int):
+        self.play_mode = mode
+        self.play_depth = depth
+        self.self_play_delay = delay_ms
+        
+        current_fen = self.chessboard.fen()
+        self.move_manager.load_fen(current_fen)
+        self.display_pgn()
+        
+        board = self.chessboard._internal_board
+        reason = self.get_game_over_reason(board)
+        if reason:
+            self.gametrain_widget.update_status(f"Game Over - {reason}")
+            self.gametrain_widget.stop_play()
+            return
+            
+        if self.play_mode == "Play as White":
+            if board.turn == chess.WHITE:
+                self.gametrain_widget.update_status("Your turn (White)")
+            else:
+                self.gametrain_widget.update_status("Engine thinking...")
+                self.trigger_engine_play()
+        elif self.play_mode == "Play as Black":
+            if board.turn == chess.BLACK:
+                self.gametrain_widget.update_status("Your turn (Black)")
+            else:
+                self.gametrain_widget.update_status("Engine thinking...")
+                self.trigger_engine_play()
+        elif self.play_mode == "Engine vs Engine":
+            self.gametrain_widget.update_status("Engine vs Engine...")
+            self.self_play_timer.start(self.self_play_delay)
+
+    def stop_engine_game(self):
+        self.self_play_timer.stop()
+        self.engine.stop_search()
+        self.gametrain_widget.update_status("Stopped")
+
+    def load_preset_position(self, fen: str):
+        self.move_manager.load_fen(fen)
+        self.display_pgn()
+        self.chessboard.update_board(fen)
+        if self.gametrain_widget.playing:
+            self.gametrain_widget.stop_play()
+
+    def trigger_engine_play(self):
+        if not self.gametrain_widget.playing:
+            return
+        board = self.chessboard._internal_board
+        reason = self.get_game_over_reason(board)
+        if reason:
+            self.gametrain_widget.update_status(f"Game Over - {reason}")
+            self.gametrain_widget.stop_play()
+            return
+            
+        self.gametrain_widget.update_status("Engine thinking...")
+        if not self.engine.is_running():
+            self.engine.start()
+        self.engine.send_position(board.fen(), "depth", options={"depth": self.play_depth})
+
+    def make_engine_vs_engine_move(self):
+        if not self.gametrain_widget.playing or self.play_mode != "Engine vs Engine":
+            self.self_play_timer.stop()
+            return
+        board = self.chessboard._internal_board
+        reason = self.get_game_over_reason(board)
+        if reason:
+            self.self_play_timer.stop()
+            self.gametrain_widget.update_status(f"Game Over - {reason}")
+            self.gametrain_widget.stop_play()
+            return
+            
+        self.trigger_engine_play()
+
     def toggle_analysis(self, toggle: bool):
         if toggle:
             self.analysis_widget.reset_lines()
+            self.clear_pending_analysis()
             if not self.engine.is_running():
                 self.engine.start()
             self.chessboard.set_eval_bar_visible(True)
             self.fen_label.show()
-            self.send_position()
+            self.send_position(force=True)
         else:
-            self.engine.send_command("stop")
+            self.engine.stop_search()
+            self.analysis_widget.clear()
+            self.clear_pending_analysis()
             self.chessboard.set_eval_bar_visible(False)
             self.fen_label.hide()
 
@@ -563,38 +818,82 @@ class ChessApp(QMainWindow):
         self.browser.setHtml(self.move_manager.html)
 
     def on_game_over(self):
-        self.engine.send_command("stop")
+        self.engine.stop_search()
+        self.clear_pending_analysis()
 
     def send_fen_to_opxl(self, fen: str):
         if self.opxl.isVisible():
             self.opxl.send_fen(fen)
 
-    def send_position(self):
+    def send_position(self, *args, force=False):
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("TestChessApp", "Config")
+        if settings.value("app_mode", "Analysis Mode") == "Game / Train Mode":
+            return
+            
         if self.analysis_widget.check_analysis.isChecked():
-            self.engine.send_command("stop")
-            self.analysis_widget.reset_lines()
-            from PyQt5.QtCore import QSettings
+            current_fen = self.chessboard.fen()
+            if not force and hasattr(self, "_last_sent_fen") and self._last_sent_fen == current_fen:
+                return
+            self._last_sent_fen = current_fen
 
-            settings = QSettings("TestChessApp", "Engine")
-            use_time_limit = settings.value("use_time_limit", False, type=bool)
-            depth = int(settings.value("depth", 20))
-            time_limit = int(settings.value("time_limit", 1000))
+            import time
+            now = time.time()
+            time_since_last_move = now - getattr(self, "last_move_time", 0)
+            self.last_move_time = now
+            
+            # Fast navigation is defined as moves played less than 250ms apart (> 4 moves per second)
+            is_fast_navigation = (time_since_last_move < 0.25)
+            
+            self.has_received_first_update = False
+            
+            # Stop the engine immediately if navigating fast. Otherwise, let ChessEngine queue the next search.
+            if is_fast_navigation:
+                self.engine.stop_search()
+            self.clear_pending_analysis()
 
-            if not use_time_limit:
-                self.engine.send_position(
-                    self.chessboard.fen(), "depth", options={"depth": depth}
-                )
+            # Handle game over status indicator in status bar and eval bar
+            board = self.chessboard._internal_board
+            reason = self.get_game_over_reason(board)
+            if reason:
+                self.statusBar().showMessage(f"Position status: {reason}")
+                if board.is_checkmate():
+                    winner_symbol = "white" if board.turn == chess.BLACK else "black"
+                    self.bar.setEngineScore({"type": "checkmate", "winner": winner_symbol})
+                    self.bar.setToolTip("Checkmate")
+                else:
+                    self.bar.setEngineScore({"type": "draw"})
+                    self.bar.setToolTip("Draw")
             else:
-                self.engine.send_position(
-                    self.chessboard.fen(), "time", options={"time": time_limit}
-                )
+                self.statusBar().clearMessage()
+
+            # Clear the widget immediately ONLY if navigating fast.
+            # If moving slowly, we keep the old lines visible until the first update of the new position arrives.
+            if is_fast_navigation:
+                self.analysis_widget.reset_lines()
+
+            # For terminal states (checkmate, stalemate), no further analysis is needed 
+            # since there are no legal moves. We stop the engine and return immediately.
+            if board.is_checkmate() or board.is_stalemate():
+                self.engine_debounce_timer.stop()
+                if not is_fast_navigation:
+                    self.analysis_widget.reset_lines()
+                return
+
+            if force or not is_fast_navigation:
+                # If forced or slow, run immediately (no debounce delay)
+                self.engine_debounce_timer.stop()
+                self.run_debounced_send_position()
+            else:
+                # If navigating fast, debounce the engine start to wait for user to pause
+                self.engine_debounce_timer.start()
 
     def open_engine_config(self):
         dlg = EngineConfigDialog(self)
         if dlg.exec_() == QDialog.Accepted:
             self.engine.set_settings(dlg.get_config())
             if self.analysis_widget.check_analysis.isChecked():
-                self.send_position()
+                self.send_position(force=True)
 
     def paste_pgn(self):
         pgn_text = QApplication.clipboard().text()
@@ -621,6 +920,7 @@ class ChessApp(QMainWindow):
             for k, v in new_headers.items():
                 self.move_manager.game.headers[k] = v
             self.move_manager.create_mapping()
+            self.move_manager.is_dirty = True
             return True
         return False
 
@@ -641,6 +941,7 @@ class ChessApp(QMainWindow):
                 with open(file, "w") as f:
                     f.write(self.move_manager.get_pgn())
                 self.statusBar().showMessage(f"PGN saved to {file}")
+                self.move_manager.is_dirty = False
 
     def export_board_image(self):
         file, ok = QFileDialog.getSaveFileName(
@@ -673,20 +974,30 @@ class ChessApp(QMainWindow):
         return super().eventFilter(watched, event)
 
     def closeEvent(self, a0):
-        if (
-            QMessageBox.question(
-                self,
-                "Quit",
-                "Are you sure you want to quit?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            == QMessageBox.Yes
-        ):
+        if self.move_manager.is_dirty:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Unsaved Changes")
+            msg_box.setText("The current game has unsaved changes.\nDo you want to save your changes?")
+            msg_box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+            msg_box.setDefaultButton(QMessageBox.Save)
+            
+            ret = msg_box.exec_()
+            
+            if ret == QMessageBox.Save:
+                self.save_pgn()
+                if not self.move_manager.is_dirty:
+                    self.engine.quit()
+                    a0.accept()
+                else:
+                    a0.ignore()
+            elif ret == QMessageBox.Discard:
+                self.engine.quit()
+                a0.accept()
+            else:
+                a0.ignore()
+        else:
             self.engine.quit()
             a0.accept()
-        else:
-            a0.ignore()
 
 
 if __name__ == "__main__":

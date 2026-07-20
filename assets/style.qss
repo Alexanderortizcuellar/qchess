@@ -69,10 +69,6 @@ QDockWidget::title {
     padding: 4px;
 }
 
-QDockWidget {
-    titlebar-close-icon: url(none);
-    titlebar-normal-icon: url(none);
-}
 
 /* --- ScrollBar --- */
 QScrollBar:vertical {
@@ -117,7 +113,7 @@ QTabBar::tab:selected {
 }
 
 /* --- Input Controls --- */
-QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox {
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDateEdit, QDateTimeEdit {
     background: #312e2b;
     color: #ffffff;
     border: 1px solid #403d39;
@@ -195,5 +191,67 @@ QHeaderView::section {
     padding: 6px;
     border: 1px solid #403d39;
     font-weight: bold;
+}
+
+/* --- List Widget --- */
+QListWidget {
+    background-color: #262421;
+    color: #bababa;
+    border: 1px solid #403d39;
+    border-radius: 3px;
+    outline: none;
+}
+
+QListWidget::item {
+    padding: 6px;
+}
+
+QListWidget::item:selected {
+    background-color: #e6912c;
+    color: #ffffff;
+}
+
+/* --- Calendar Popup --- */
+QCalendarWidget {
+    border: 1px solid #403d39;
+    border-radius: 3px;
+}
+
+QCalendarWidget QWidget#qt_calendar_navigationbar {
+    background-color: #21201d;
+}
+
+QCalendarWidget QToolButton {
+    color: #bababa;
+    background-color: transparent;
+    border: none;
+    font-weight: bold;
+}
+
+QCalendarWidget QToolButton:hover {
+    background-color: #312e2b;
+    border-radius: 3px;
+}
+
+QCalendarWidget QMenu {
+    background-color: #262421;
+    color: #bababa;
+}
+
+QCalendarWidget QSpinBox {
+    background-color: #312e2b;
+    color: #ffffff;
+    border: 1px solid #403d39;
+}
+
+QCalendarWidget QAbstractItemView:enabled {
+    background-color: #262421;
+    color: #bababa;
+    selection-background-color: #e6912c;
+    selection-color: #ffffff;
+}
+
+QCalendarWidget QAbstractItemView:disabled {
+    color: #403d39;
 }
 

@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QAction, QPushButton
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QKeySequence, QIcon
+from PyQt5.QtGui import QKeySequence
 import qtawesome as qta
 
 ICON_SIZE = QSize(20, 20)

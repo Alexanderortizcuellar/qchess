@@ -17,6 +17,7 @@ class MoveManager(QObject):
         self.html_style = False  # True for dark theme
         self.font_family = "sans-serif"
         self.game = chess.pgn.Game()
+        self.is_dirty = False
         if pgn_str:
             self.update_pgn(pgn_str)
         self.current_node = self.game
@@ -27,6 +28,7 @@ class MoveManager(QObject):
         self.game.setup(board)
         self.current_node = self.game
         self.create_mapping()
+        self.is_dirty = True
 
     def update_pgn(self, pgn_str: str):
         pgn_io = StringIO(pgn_str)
@@ -34,15 +36,18 @@ class MoveManager(QObject):
         if game:
             self.game = game
             self.create_mapping()
+            self.is_dirty = True
             return
         self.game = chess.pgn.Game()
         self.create_mapping()
+        self.is_dirty = True
 
     def load_pgn_file(self, filename: str):
         with open(filename, "r") as f:
             game = chess.pgn.read_game(f)
         self.game = game
         self.create_mapping()
+        self.is_dirty = False
 
     def make_move(self, move_uci):
         move = chess.Move.from_uci(move_uci)
@@ -59,6 +64,7 @@ class MoveManager(QObject):
         if self.current_node.board().result() != "*":
             self.game.headers["Result"] = self.current_node.board().result()
         self.create_mapping()
+        self.is_dirty = True
 
     def undo(self):
         if self.current_node.parent:
@@ -69,8 +75,47 @@ class MoveManager(QObject):
         """Return a list of variations from the current node."""
         variations = {}
         for index, var in enumerate(self.current_node.variations):
-            san = self.current_node.board().san(var.move)
-            variations[index] = {"uci": var.move.uci(), "san": san}
+            board = self.current_node.board()
+            first_move_num = board.fullmove_number
+            first_turn = board.turn
+            first_san = board.san(var.move)
+            
+            if first_turn == chess.WHITE:
+                first_move_formatted = f"{first_move_num}.{first_san}"
+            else:
+                first_move_formatted = f"{first_move_num}...{first_san}"
+                
+            board.push(var.move)
+            
+            continuation_formatted = []
+            temp_node = var
+            moves_shown = 1
+            while moves_shown < 5 and temp_node.variations:
+                next_node = temp_node.variations[0]
+                san = board.san(next_node.move)
+                turn = board.turn
+                move_num = board.fullmove_number
+                
+                if turn == chess.WHITE:
+                    continuation_formatted.append(f"{move_num}.{san}")
+                else:
+                    continuation_formatted.append(san)
+                        
+                board.push(next_node.move)
+                temp_node = next_node
+                moves_shown += 1
+                
+            if continuation_formatted:
+                continuation_str = " ".join(continuation_formatted)
+                line_str = f"{first_move_formatted} {continuation_str}"
+            else:
+                line_str = first_move_formatted
+
+            variations[index] = {
+                "uci": var.move.uci(),
+                "san": first_san,
+                "line": line_str
+            }
         return variations
 
     def get_node_by_index(self, index: int):
@@ -128,6 +173,7 @@ class MoveManager(QObject):
         node = self.get_node_by_index(index)
         node.comment = comment
         self.create_mapping()
+        self.is_dirty = True
 
     def promote_to_main(self, index: int):
         node = self.get_node_by_index(index)
@@ -135,6 +181,7 @@ class MoveManager(QObject):
         if parent:
             parent.promote_to_main(node)
             self.create_mapping()
+            self.is_dirty = True
 
     def promote(self, index: int):
         node = self.get_node_by_index(index)
@@ -142,6 +189,7 @@ class MoveManager(QObject):
         if parent:
             parent.promote(node)
             self.create_mapping()
+            self.is_dirty = True
 
     def demote(self, index: int):
         node = self.get_node_by_index(index)
@@ -149,6 +197,7 @@ class MoveManager(QObject):
         if parent:
             parent.demote(node)
             self.create_mapping()
+            self.is_dirty = True
 
     def delete_from_here(self, index: int):
         node = self.get_node_by_index(index)
@@ -168,6 +217,7 @@ class MoveManager(QObject):
                 self.current_node = parent
                 
             self.create_mapping()
+            self.is_dirty = True
 
     def change_html_style(self, html_style=False):
         self.html_style = html_style
@@ -177,3 +227,4 @@ class MoveManager(QObject):
         self.game = chess.pgn.Game()
         self.current_node = self.game
         self.create_mapping()
+        self.is_dirty = False
