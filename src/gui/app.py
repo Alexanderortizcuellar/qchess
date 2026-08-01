@@ -27,6 +27,7 @@ from gui.widgets.chessboard import ChessBoard
 from core.engine import ChessEngine
 from core.move_manager import MoveManager
 from gui.widgets.pgn_browser import PGNBrowser
+from gui.widgets.game_analytics import GameAnalytics
 from gui.dialogs.variations_dlg import VariationsDialog
 from utils.helpers import _create_action, _create_iconed_button
 from gui.dialogs.board_editor import BoardEditorDlg
@@ -223,6 +224,14 @@ class ChessApp(QMainWindow):
         self.addDockWidget(Qt.RightDockWidgetArea, self.explorer_dock)
         self.explorer_dock.hide()
 
+        # 4. Game Analytics Dock
+        self.analytics_widget = GameAnalytics(self)
+        self.analytics_dock = QDockWidget("Game Analytics", self)
+        self.analytics_dock.setWidget(self.analytics_widget)
+        self.analytics_dock.setObjectName("analytics_dock")
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.analytics_dock)
+        self.analytics_widget.moveIndexRequested.connect(self.move_manager.jump_to)
+
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
         self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
         QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
@@ -232,6 +241,7 @@ class ChessApp(QMainWindow):
         self.addToolBar(self.toolbar)
         self.init_menubar()
         self.display_pgn()
+        self.analytics_widget.update_data(self.move_manager.game, self.move_manager.current_node)
         self.apply_settings()
 
         # --- Signals ---
@@ -465,6 +475,7 @@ class ChessApp(QMainWindow):
         docks_menu.addAction(self.pgn_dock.toggleViewAction())
         docks_menu.addAction(self.analysis_dock.toggleViewAction())
         docks_menu.addAction(self.explorer_dock.toggleViewAction())
+        docks_menu.addAction(self.analytics_dock.toggleViewAction())
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
@@ -605,6 +616,9 @@ class ChessApp(QMainWindow):
             )
             if self.analysis_widget.check_analysis.isChecked():
                 self.send_position(force=True)
+                
+        if hasattr(self, "opxl") and self.opxl.isVisible():
+            self.send_fen_to_opxl(self.chessboard.fen())
 
     def set_style(self, style_name=None):
         if style_name is None:
@@ -626,6 +640,7 @@ class ChessApp(QMainWindow):
             self.analysis_widget.set_theme(True)
             self.gametrain_widget.set_theme(True)
             self.opxl.set_theme(True)
+            self.analytics_widget.set_theme(True)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, True)
@@ -635,6 +650,7 @@ class ChessApp(QMainWindow):
             self.analysis_widget.set_theme(False)
             self.gametrain_widget.set_theme(False)
             self.opxl.set_theme(False)
+            self.analytics_widget.set_theme(False)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, False)
@@ -690,6 +706,8 @@ class ChessApp(QMainWindow):
         self.chessboard.update_board(
             self.move_manager.get_board().fen(), last_move
         )
+        if hasattr(self, "analytics_widget"):
+            self.analytics_widget.update_data(self.move_manager.game, node)
 
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())

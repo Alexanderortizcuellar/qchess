@@ -1,7 +1,8 @@
 import chess
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
-    QCheckBox, QSpinBox, QPushButton, QGroupBox, QFormLayout
+    QCheckBox, QSpinBox, QPushButton, QGroupBox, QFormLayout,
+    QLineEdit, QFileDialog
 )
 from PyQt5.QtCore import QSettings
 
@@ -39,6 +40,22 @@ class SettingsDialog(QDialog):
         
         layout.addWidget(board_group)
         
+        # --- Opening Explorer Settings ---
+        explorer_group = QGroupBox("Opening Explorer")
+        explorer_form = QFormLayout(explorer_group)
+        
+        self.pgn_path_edit = QLineEdit()
+        self.pgn_path_edit.setPlaceholderText("Select PGN file...")
+        
+        browse_layout = QHBoxLayout()
+        browse_layout.addWidget(self.pgn_path_edit)
+        self.browse_btn = QPushButton("Browse...")
+        self.browse_btn.clicked.connect(self.browse_pgn_file)
+        browse_layout.addWidget(self.browse_btn)
+        
+        explorer_form.addRow("Explorer PGN:", browse_layout)
+        layout.addWidget(explorer_group)
+        
         # --- Mode Settings ---
         mode_group = QGroupBox("Application Mode")
         mode_form = QFormLayout(mode_group)
@@ -59,6 +76,13 @@ class SettingsDialog(QDialog):
         buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
 
+    def browse_pgn_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Explorer PGN File", "", "PGN Files (*.pgn);;All Files (*)"
+        )
+        if file_path:
+            self.pgn_path_edit.setText(file_path)
+
     def load_settings(self):
         theme = self.settings.value("board_theme", "Classic")
         self.theme_combo.setCurrentText(theme)
@@ -72,6 +96,12 @@ class SettingsDialog(QDialog):
         use_figurine = self.settings.value("use_figurine_font", True, type=bool)
         self.figurine_font_cb.setChecked(use_figurine)
 
+        pgn_path = self.settings.value(
+            "explorer_pgn_path",
+            r"C:\Users\ASUS\programming\qt_programs\chess\downloader\alex.pgn"
+        )
+        self.pgn_path_edit.setText(pgn_path)
+
         mode = self.settings.value("app_mode", "Analysis Mode")
         self.mode_combo.setCurrentText(mode)
 
@@ -80,6 +110,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
+        self.settings.setValue("explorer_pgn_path", self.pgn_path_edit.text())
         self.settings.setValue("app_mode", self.mode_combo.currentText())
         self.accept()
 
@@ -89,5 +120,6 @@ class SettingsDialog(QDialog):
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
             "use_figurine_font": self.figurine_font_cb.isChecked(),
+            "explorer_pgn_path": self.pgn_path_edit.text(),
             "app_mode": self.mode_combo.currentText()
         }

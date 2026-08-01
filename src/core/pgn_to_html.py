@@ -13,61 +13,50 @@ def flatten_nodes_pgn_order(
 
     If `annotate_index` is True, attaches `node.flat_index = i` to each node.
     """
+    out = []
+    
+    if not game.variations:
+        return []
+        
+    class Frame:
+        def __init__(self, node, sidelines=True):
+            self.node = node
+            self.state = "pre"
+            self.variations = iter(node.parent.variations[1:]) if sidelines else iter([])
 
-    class _Collector(chess.pgn.BaseVisitor[None]):
-        def __init__(self, root: chess.pgn.Game):
-            self.root = root
-            # Stack tracks the "current position node" as accept() walks the tree
-            # (same idea as GameBuilder.variation_stack).
-            self.stack: List[chess.pgn.GameNode] = []
-            self.out: List[chess.pgn.GameNode] = []
-
-        def begin_game(self) -> None:
-            self.stack = [self.root]
-
-        def begin_variation(self) -> None:
-            # python-chess jumps back to the branch point (parent of current node)
-            # before descending into a side variation.
-            parent = self.stack[-1].parent
-            assert parent is not None, "begin_variation at root is invalid"
-            self.stack.append(parent)
-
-        def end_variation(self) -> None:
-            self.stack.pop()
-
-        def visit_move(self, board: chess.Board, move: chess.Move) -> None:
-            # Current parent position:
-            parent = self.stack[-1]
-
-            # Find the child node under `parent` that corresponds to `move`.
-            # Use both object equality and UCI as a robust fallback.
-            found: Optional[chess.pgn.GameNode] = None
-            u = move.uci()
-            for child in parent.variations:
-                if child.move == move or child.move.uci() == u:
-                    found = child
-                    break
-
-            if found is None:
-                # This should not happen unless the tree is inconsistent.
-                raise RuntimeError("Could not map visitor move to a tree node.")
-
-            # Record node in PGN order and advance the stack to that node.
-            self.out.append(found)
-            self.stack[-1] = found
-
-        def result(self) -> None:
-            # We don't need to return anything here; we'll read self.out.
-            return None
-
-    collector = _Collector(game)
-    game.accept(collector)
-
+    stack = [Frame(game.variations[0], sidelines=True)]
+    
+    while stack:
+        top = stack[-1]
+        
+        if top.state == "pre":
+            if top.node.move is not None:
+                out.append(top.node)
+            top.state = "variations"
+            
+        elif top.state == "variations":
+            try:
+                variation = next(top.variations)
+            except StopIteration:
+                if top.node.variations:
+                    stack.append(Frame(top.node.variations[0], sidelines=True))
+                    top.state = "post"
+                else:
+                    top.state = "end"
+            else:
+                stack.append(Frame(variation, sidelines=False))
+                
+        elif top.state == "post":
+            top.state = "end"
+            
+        else:
+            stack.pop()
+            
     if annotate_index:
-        for i, n in enumerate(collector.out):
-            setattr(n, "flat_index", i)  # attach a handy index for later use
-
-    return collector.out
+        for i, n in enumerate(out):
+            n.flat_index = i
+            
+    return out
 
 
 class HtmlExporterMixin:

@@ -35,10 +35,12 @@ class MoveManager(QObject):
         game = chess.pgn.read_game(pgn_io)
         if game:
             self.game = game
+            self.current_node = self.game
             self.create_mapping()
             self.is_dirty = True
             return
         self.game = chess.pgn.Game()
+        self.current_node = self.game
         self.create_mapping()
         self.is_dirty = True
 
@@ -46,6 +48,7 @@ class MoveManager(QObject):
         with open(filename, "r") as f:
             game = chess.pgn.read_game(f)
         self.game = game
+        self.current_node = self.game
         self.create_mapping()
         self.is_dirty = False
 
@@ -165,7 +168,8 @@ class MoveManager(QObject):
 
     def create_mapping(self):
         self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style, self.font_family)
-        self.pgnChanged.emit(self.get_pgn())
+        # Emit empty string to avoid expensive PGN serialization during navigation
+        self.pgnChanged.emit("")
         self.activeNodeChanged.emit()
 
 
