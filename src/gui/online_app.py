@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (
 )
 from core.network_client import ChessClient
 from gui.widgets.chessboard import ChessBoard
-from gui.widgets.pgn_browser import PGNBrowser
+from gui.widgets.painter_pgn_browser import QPainterPGNBrowser
 from core.move_manager import MoveManager
 
 class OnlineChessApp(QMainWindow):
@@ -264,7 +264,7 @@ class OnlineChessApp(QMainWindow):
         self.waiting_indicator.hide()
         info_layout.addWidget(self.waiting_indicator)
         
-        self.pgn_browser = PGNBrowser(self, self.move_manager)
+        self.pgn_browser = QPainterPGNBrowser(self, self.move_manager)
         info_layout.addWidget(self.pgn_browser)
         
         self.resign_btn = QPushButton("Resign")

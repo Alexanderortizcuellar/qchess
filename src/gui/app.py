@@ -26,7 +26,7 @@ from gui.widgets.game_train_widget import GameTrainWidget
 from gui.widgets.chessboard import ChessBoard
 from core.engine import ChessEngine
 from core.move_manager import MoveManager
-from gui.widgets.pgn_browser import PGNBrowser
+from gui.widgets.painter_pgn_browser import QPainterPGNBrowser
 from gui.widgets.game_analytics import GameAnalytics
 from gui.dialogs.variations_dlg import VariationsDialog
 from utils.helpers import _create_action, _create_iconed_button
@@ -158,7 +158,7 @@ class ChessApp(QMainWindow):
 
 
         # 2. PGN & Navigation Dock
-        self.browser = PGNBrowser(self, self.move_manager)
+        self.browser = QPainterPGNBrowser(self, self.move_manager)
         self.navigation_layout = QHBoxLayout()
         self.jump_to_start_button = _create_iconed_button(
             "ph.caret-double-left-fill", "Home"
