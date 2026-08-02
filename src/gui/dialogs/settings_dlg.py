@@ -56,6 +56,13 @@ class SettingsDialog(QDialog):
         explorer_form.addRow("Explorer PGN:", browse_layout)
         layout.addWidget(explorer_group)
         
+        # --- PGN Browser Settings ---
+        browser_group = QGroupBox("PGN Browser Settings")
+        browser_form = QFormLayout(browser_group)
+        self.show_eval_cb = QCheckBox("Show Engine Evaluations inline")
+        browser_form.addRow(self.show_eval_cb)
+        layout.addWidget(browser_group)
+
         # --- Mode Settings ---
         mode_group = QGroupBox("Application Mode")
         mode_form = QFormLayout(mode_group)
@@ -96,6 +103,9 @@ class SettingsDialog(QDialog):
         use_figurine = self.settings.value("use_figurine_font", True, type=bool)
         self.figurine_font_cb.setChecked(use_figurine)
 
+        show_eval = self.settings.value("show_eval_annotations", True, type=bool)
+        self.show_eval_cb.setChecked(show_eval)
+
         pgn_path = self.settings.value(
             "explorer_pgn_path",
             r"C:\Users\ASUS\programming\qt_programs\chess\downloader\alex.pgn"
@@ -110,6 +120,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
+        self.settings.setValue("show_eval_annotations", self.show_eval_cb.isChecked())
         self.settings.setValue("explorer_pgn_path", self.pgn_path_edit.text())
         self.settings.setValue("app_mode", self.mode_combo.currentText())
         self.accept()
@@ -120,6 +131,7 @@ class SettingsDialog(QDialog):
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
             "use_figurine_font": self.figurine_font_cb.isChecked(),
+            "show_eval_annotations": self.show_eval_cb.isChecked(),
             "explorer_pgn_path": self.pgn_path_edit.text(),
             "app_mode": self.mode_combo.currentText()
         }

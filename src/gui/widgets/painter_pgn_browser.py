@@ -1,16 +1,38 @@
 import re
 from PyQt5.QtCore import Qt, QRect, QSize, pyqtSignal, QUrl
 from PyQt5.QtGui import QColor, QFont, QPainter, QFontMetrics
-from PyQt5.QtWidgets import QScrollArea, QWidget, QMenu, QAction
+from PyQt5.QtWidgets import QScrollArea, QWidget, QMenu, QAction, QVBoxLayout
 import chess.pgn
 
 from gui.widgets.pgn_browser import CommentDialog
+
+
+def format_compact_eval(eval_str: str) -> str:
+    if not eval_str:
+        return ""
+    try:
+        # Check if mate (e.g. #5 or #-3)
+        if '#' in eval_str:
+            return eval_str
+        val = float(eval_str)
+        # Round to 1 decimal place
+        rounded = round(val, 1)
+        # Format with + sign if positive
+        if rounded > 0:
+            return f"+{rounded:.1f}"
+        elif rounded == 0:
+            return "0.0"
+        else:
+            return f"{rounded:.1f}"
+    except ValueError:
+        return eval_str
 
 
 class PaintBlock:
     def __init__(self, level):
         self.level = level
         self.tokens = []
+        self.rect = None
 
 
 class Token:
@@ -33,186 +55,40 @@ class QPainterBrowser(QWidget):
         
     def set_blocks(self, blocks):
         self.blocks = blocks
-        self.update_size()
-        self.update()
+        self.compute_layout(self.blocks)
         
-    def update_size(self):
-        self.setMinimumHeight(len(self.blocks) * self.line_height * 2 + 100)
-        self.setMinimumWidth(300)
-        
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-        
-        is_dark = self.parent_browser.is_dark
-        active_index = self.parent_browser.active_index
-        width = self.width() - 30  # Margin bounds
-        
-        # Theme colors
-        if is_dark:
-            bg_color = QColor("#121212")
-            text_color = QColor("#E0E0E0")
-            num_color = QColor("#8A8A93")
-            main_move_color = QColor("#BB86FC")
-            var_move_color = QColor("#8A8A93")
-            comment_color = QColor("#03DAC6")
-            highlight_bg = QColor("#004D40")
-            highlight_text_col = QColor("#E0F7FA")
-            bracket_color = QColor("#7E7E8A")
-            header_bg = QColor("#1E1E24")
-            header_border = QColor("#2C2C35")
-            header_vs = QColor("#BB86FC")
-            header_sub = QColor("#8A8A93")
-        else:
-            bg_color = QColor("#FAF9F6")
-            text_color = QColor("#2C3E50")
-            num_color = QColor("#7F8C8D")
-            main_move_color = QColor("#1A252C")
-            var_move_color = QColor("#7F8C8D")
-            comment_color = QColor("#16A085")
-            highlight_bg = QColor("#B2DFDB")
-            highlight_text_col = QColor("#004D40")
-            bracket_color = QColor("#BDC3C7")
-            header_bg = QColor("#EAEDED")
-            header_border = QColor("#BDC3C7")
-            header_vs = QColor("#2980B9")
-            header_sub = QColor("#7F8C8D")
-            
-        # Draw background
-        painter.fillRect(self.rect(), bg_color)
+    def compute_layout(self, blocks):
+        self.blocks = blocks
         
         # Setup fonts
         base_size = self.parent_browser.base_font_size
         font_size = base_size - 2 if self.parent_browser.cb_compact else base_size
         font_family = self.parent_browser.font_family
+        
         normal_font = QFont(font_family, font_size)
         bold_font = QFont(font_family, font_size, QFont.Bold)
         italic_font = QFont(font_family, font_size, -1, True)
+        ann_font = QFont(font_family, max(8, font_size - 3))
         
         fm = QFontMetrics(normal_font)
         fm_bold = QFontMetrics(bold_font)
         fm_italic = QFontMetrics(italic_font)
+        fm_ann = QFontMetrics(ann_font)
         
-        # Get game headers
-        headers = {}
-        if hasattr(self.parent_browser.move_manager, 'game') and self.parent_browser.move_manager.game:
-            headers = self.parent_browser.move_manager.game.headers
-
-        # Draw game header card if game is loaded
-        header_offset = 20
-        if headers:
-            card_margin = 15
-            card_padding = 15
-            card_width = width
-            
-            # Check if this is a default new game (no real game loaded yet)
-            white = headers.get("White", "?")
-            black = headers.get("Black", "?")
-            event = headers.get("Event", "?")
-            
-            is_new_game = (white == "?" and black == "?" and (event == "?" or event == "Chess Analysis" or not event))
-            
-            if is_new_game:
-                header_height = 50
-                card_rect = QRect(card_margin, 20, card_width, header_height)
-                
-                # Draw card rounded rect
-                painter.setPen(header_border)
-                painter.setBrush(header_bg)
-                painter.drawRoundedRect(card_rect, 6, 6)
-                
-                # Draw "New Game"
-                painter.setFont(QFont("Segoe UI", 13, QFont.Bold))
-                painter.setPen(text_color)
-                fm_new = QFontMetrics(painter.font())
-                new_str = "New Game"
-                title_y = 20 + (header_height - fm_new.height()) // 2 + fm_new.ascent()
-                painter.drawText(card_margin + card_padding, title_y, new_str)
-                
-                painter.setBrush(Qt.NoBrush)
-                header_offset = 20 + header_height + 20
-            else:
-                # Fonts for header
-                header_title_font = QFont("Segoe UI", 16, QFont.Bold)
-                header_sub_font = QFont("Segoe UI", 11)
-                
-                # Setup player names
-                white_elo = headers.get("WhiteElo", "")
-                black_elo = headers.get("BlackElo", "")
-                
-                white_str = f"{white} ({white_elo})" if white_elo else white
-                black_str = f"{black} ({black_elo})" if black_elo else black
-                
-                # Subtitle information
-                site = headers.get("Site", "?")
-                date = headers.get("Date", "?")
-                result = headers.get("Result", "*")
-                eco = headers.get("ECO", "")
-                
-                # Just show values without keys
-                sub_parts = [event, site, date, result]
-                if eco:
-                    sub_parts.append(eco)
-                sub_text = " | ".join(sub_parts)
-                
-                fm_title = QFontMetrics(header_title_font)
-                fm_sub = QFontMetrics(header_sub_font)
-                
-                header_height = 90
-                card_rect = QRect(card_margin, 20, card_width, header_height)
-                
-                # Draw card rounded rect
-                painter.setPen(header_border)
-                painter.setBrush(header_bg)
-                painter.drawRoundedRect(card_rect, 6, 6)
-                
-                # Elide player names if too long
-                available_width = card_width - (card_padding * 2)
-                vs_w = fm_title.width(" vs ")
-                max_name_w = (available_width - vs_w) // 2
-                
-                white_elided = fm_title.elidedText(white_str, Qt.ElideRight, max_name_w)
-                black_elided = fm_title.elidedText(black_str, Qt.ElideRight, max_name_w)
-                sub_text_elided = fm_sub.elidedText(sub_text, Qt.ElideRight, available_width)
-                
-                # Draw Title: White vs Black
-                title_y = 20 + card_padding + fm_title.ascent()
-                title_x = card_margin + card_padding
-                
-                painter.setFont(header_title_font)
-                
-                painter.setPen(text_color)
-                painter.drawText(title_x, title_y, white_elided)
-                title_x += fm_title.width(white_elided)
-                
-                painter.setPen(header_vs)
-                painter.drawText(title_x, title_y, " vs ")
-                title_x += vs_w
-                
-                painter.setPen(text_color)
-                painter.drawText(title_x, title_y, black_elided)
-                
-                # Draw Subtitle
-                sub_y = 20 + card_padding + fm_title.height() + 8 + fm_sub.ascent()
-                sub_x = card_margin + card_padding
-                painter.setFont(header_sub_font)
-                painter.setPen(header_sub)
-                painter.drawText(sub_x, sub_y, sub_text_elided)
-                
-                # Reset brush & pen
-                painter.setBrush(Qt.NoBrush)
-                
-                header_offset = 20 + header_height + 20
-            
         self.line_height = fm.height() + 8
         margin_left = 15
-        y = header_offset
+        width = self.width() - 30  # Margin bounds
+        if width <= 0:
+            width = 300
+            
+        y = 20
         
         for block in self.blocks:
             x = margin_left
-            # Indent variation blocks slightly
             indent = 20 if block.level > 0 else 0
             x += indent
+            
+            block_top = y
             
             if not block.tokens:
                 continue
@@ -221,16 +97,14 @@ class QPainterBrowser(QWidget):
                 # Set layout fonts and measure token width
                 if token.token_type == "move":
                     if token.level == 0:
-                        font = bold_font
                         fm_current = fm_bold
                     else:
-                        font = normal_font
                         fm_current = fm
                 elif token.token_type == "comment":
-                    font = italic_font
                     fm_current = fm_italic
+                elif token.token_type == "eval":
+                    fm_current = fm_ann
                 else:
-                    font = normal_font
                     fm_current = fm
                     
                 w = fm_current.width(token.text)
@@ -241,7 +115,85 @@ class QPainterBrowser(QWidget):
                     x = margin_left + indent
                     
                 token.rect = QRect(x, y, w + 6, self.line_height)
+                x += w + 8  # Add space between tokens
                 
+            block_bottom = y + self.line_height
+            block.rect = QRect(margin_left, block_top, width, block_bottom - block_top)
+            
+            # Block spacing
+            y = block_bottom + 8
+            
+        # Update height dynamically based on computed layout height
+        self.setMinimumHeight(y + 40)
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        is_dark = self.parent_browser.is_dark
+        active_index = self.parent_browser.active_index
+        
+        # Viewport intersection bounds
+        scrollbar = self.parent_browser.scroll_area.verticalScrollBar()
+        viewport_top = scrollbar.value()
+        viewport_bottom = viewport_top + self.parent_browser.scroll_area.viewport().height()
+        
+        # Theme colors
+        if is_dark:
+            bg_color = QColor("#262421")
+            text_color = QColor("#ffffff")
+            num_color = QColor("#8b8987")
+            main_move_color = QColor("#ffffff")
+            var_move_color = QColor("#8b8987")
+            comment_color = QColor("#81c784")
+            eval_color = QColor("#4fc3f7")
+            highlight_bg = QColor("#403d39")
+            highlight_text_col = QColor("#e6912c")
+            bracket_color = QColor("#8b8987")
+        else:
+            bg_color = QColor("#f1f1f1")
+            text_color = QColor("#312e2b")
+            num_color = QColor("#555555")
+            main_move_color = QColor("#312e2b")
+            var_move_color = QColor("#777777")
+            comment_color = QColor("#2e7d32")
+            eval_color = QColor("#0288d1")
+            highlight_bg = QColor("#e1e1e1")
+            highlight_text_col = QColor("#e6912c")
+            bracket_color = QColor("#999999")
+            
+        # Draw background
+        painter.fillRect(self.rect(), bg_color)
+        
+        # Setup fonts
+        base_size = self.parent_browser.base_font_size
+        font_size = base_size - 2 if self.parent_browser.cb_compact else base_size
+        font_family = self.parent_browser.font_family
+        
+        normal_font = QFont(font_family, font_size)
+        bold_font = QFont(font_family, font_size, QFont.Bold)
+        italic_font = QFont(font_family, font_size, -1, True)
+        ann_font = QFont(font_family, max(8, font_size - 3))
+        
+        fm_normal = QFontMetrics(normal_font)
+        
+        # Draw blocks that intersect with viewport
+        for block in self.blocks:
+            if hasattr(block, 'rect') and block.rect:
+                if block.rect.bottom() < viewport_top - 50 or block.rect.top() > viewport_bottom + 50:
+                    continue
+                    
+            if not block.tokens:
+                continue
+                
+            for token in block.tokens:
+                if not token.rect:
+                    continue
+                    
+                if token.rect.bottom() < viewport_top or token.rect.top() > viewport_bottom:
+                    continue
+                    
                 # Draw token text
                 if token.token_type == "move":
                     if token.move_idx == active_index:
@@ -251,27 +203,22 @@ class QPainterBrowser(QWidget):
                     else:
                         painter.setFont(bold_font if token.level == 0 else normal_font)
                         painter.setPen(main_move_color if token.level == 0 else var_move_color)
-                    painter.drawText(x + 3, y + fm_current.ascent(), token.text)
+                    painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
                     
                 elif token.token_type == "comment":
                     painter.setFont(italic_font)
                     painter.setPen(comment_color)
-                    painter.drawText(x + 3, y + fm_current.ascent(), token.text)
+                    painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
+                    
+                elif token.token_type == "eval":
+                    painter.setFont(ann_font)
+                    painter.setPen(eval_color)
+                    painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
                     
                 else:
                     painter.setFont(normal_font)
                     painter.setPen(bracket_color if token.text in ["[", "]", "(", ")"] else num_color)
-                    painter.drawText(x + 3, y + fm_current.ascent(), token.text)
-                    
-                x += w + 8  # Add space between tokens
-                
-            # Block spacing
-            y += self.line_height + 8
-            
-        # Update minimum height dynamically based on final computed height
-        expected_height = y + 40
-        if self.minimumHeight() != expected_height:
-            self.setMinimumHeight(expected_height)
+                    painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
 
     def mousePressEvent(self, event):
         self.setFocus()
@@ -279,7 +226,6 @@ class QPainterBrowser(QWidget):
         for block in self.blocks:
             for token in block.tokens:
                 if token.token_type == "move" and token.rect and token.rect.contains(pos):
-                    # Notify parent browser to jump to this move
                     self.parent_browser.jump_to_move(token.move_idx)
                     event.accept()
                     return
@@ -301,74 +247,243 @@ class QPainterBrowser(QWidget):
         else:
             super().keyPressEvent(event)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.parent_browser.rebuild_layout()
 
-class QPainterPGNBrowser(QScrollArea):
+
+class QPainterHeaderWidget(QWidget):
+    def __init__(self, parent_browser):
+        super().__init__()
+        self.parent_browser = parent_browser
+        self.setFixedHeight(95)
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        is_dark = self.parent_browser.is_dark
+        bg_color = QColor("#262421") if is_dark else QColor("#f1f1f1")
+        painter.fillRect(self.rect(), bg_color)
+        
+        headers = {}
+        if hasattr(self.parent_browser.move_manager, 'game') and self.parent_browser.move_manager.game:
+            headers = self.parent_browser.move_manager.game.headers
+            
+        if not headers:
+            return
+            
+        white = headers.get("White", "?")
+        black = headers.get("Black", "?")
+        event_name = headers.get("Event", "?")
+        
+        is_new_game = (white == "?" and black == "?" and (event_name == "?" or event_name == "Chess Analysis" or not event_name))
+        
+        # Theme colors
+        if is_dark:
+            text_color = QColor("#ffffff")
+            header_bg = QColor("#312e2b")
+            header_border = QColor("#403d39")
+            header_vs = QColor("#e6912c")
+            header_sub = QColor("#8b8987")
+        else:
+            text_color = QColor("#312e2b")
+            header_bg = QColor("#e1e1e1")
+            header_border = QColor("#cccccc")
+            header_vs = QColor("#e6912c")
+            header_sub = QColor("#555555")
+            
+        card_margin = 15
+        card_padding = 10
+        card_width = self.width() - 30
+        
+        if is_new_game:
+            header_height = 42
+            card_rect = QRect(card_margin, 10, card_width, header_height)
+            
+            painter.setPen(header_border)
+            painter.setBrush(header_bg)
+            painter.drawRoundedRect(card_rect, 6, 6)
+            
+            painter.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            painter.setPen(text_color)
+            fm_new = QFontMetrics(painter.font())
+            title_y = 10 + (header_height - fm_new.height()) // 2 + fm_new.ascent()
+            painter.drawText(card_margin + card_padding, title_y, "New Game")
+        else:
+            header_height = 70
+            card_rect = QRect(card_margin, 10, card_width, header_height)
+            
+            painter.setPen(header_border)
+            painter.setBrush(header_bg)
+            painter.drawRoundedRect(card_rect, 6, 6)
+            
+            header_title_font = QFont("Segoe UI", 12, QFont.Bold)
+            header_sub_font = QFont("Segoe UI", 9)
+            
+            # Setup player names
+            white_elo = headers.get("WhiteElo", "")
+            black_elo = headers.get("BlackElo", "")
+            white_str = f"{white} ({white_elo})" if white_elo else white
+            black_str = f"{black} ({black_elo})" if black_elo else black
+            
+            site = headers.get("Site", "?")
+            date = headers.get("Date", "?")
+            result = headers.get("Result", "*")
+            eco = headers.get("ECO", "")
+            
+            sub_parts = [event_name, site, date, result]
+            if eco:
+                sub_parts.append(eco)
+            sub_text = " | ".join(sub_parts)
+            
+            fm_title = QFontMetrics(header_title_font)
+            fm_sub = QFontMetrics(header_sub_font)
+            
+            available_width = card_width - (card_padding * 2)
+            vs_w = fm_title.width(" vs ")
+            max_name_w = (available_width - vs_w) // 2
+            
+            white_elided = fm_title.elidedText(white_str, Qt.ElideRight, max_name_w)
+            black_elided = fm_title.elidedText(black_str, Qt.ElideRight, max_name_w)
+            sub_text_elided = fm_sub.elidedText(sub_text, Qt.ElideRight, available_width)
+            
+            title_y = 10 + card_padding + fm_title.ascent()
+            title_x = card_margin + card_padding
+            
+            painter.setFont(header_title_font)
+            painter.setPen(text_color)
+            painter.drawText(title_x, title_y, white_elided)
+            title_x += fm_title.width(white_elided)
+            
+            painter.setPen(header_vs)
+            painter.drawText(title_x, title_y, " vs ")
+            title_x += vs_w
+            
+            painter.setPen(text_color)
+            painter.drawText(title_x, title_y, black_elided)
+            
+            sub_y = 10 + card_padding + fm_title.height() + 4 + fm_sub.ascent()
+            sub_x = card_margin + card_padding
+            painter.setFont(header_sub_font)
+            painter.setPen(header_sub)
+            painter.drawText(sub_x, sub_y, sub_text_elided)
+            
+        painter.setBrush(Qt.NoBrush)
+
+
+class QPainterPGNBrowser(QWidget):
     anchorClicked = pyqtSignal(QUrl)
 
     def __init__(self, parent, move_manager):
         super().__init__(parent)
         self.move_manager = move_manager
         
-        self.setWidgetResizable(True)
-        self.setFocusPolicy(Qt.NoFocus)
-        self.setFrameStyle(0)  # No frame border
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
         
-        # Setup inner paint widget
-        self.paint_widget = QPainterBrowser(self)
-        self.setWidget(self.paint_widget)
-        
-        # Default options matching setup
         self.is_dark = True
         self.cb_compact = False
         self.show_comments = True
         self.show_variations = True
+        self.show_eval = True
         self.layout_mode = 1  # 1 = ChessBase Blocks
         self.font_family = "Segoe UI"
-        self.base_font_size = 14
+        self.base_font_size = 12
         self.active_index = -1
         self.flat_nodes = []
         self.blocks = []
         
-        # Context Menu Setup
+        # Fixed header widget
+        self.header_widget = QPainterHeaderWidget(self)
+        self.main_layout.addWidget(self.header_widget)
+        
+        # Scroll area wrapping the custom paint browser
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFocusPolicy(Qt.NoFocus)
+        self.scroll_area.setFrameStyle(0)
+        
+        self.paint_widget = QPainterBrowser(self)
+        self.scroll_area.setWidget(self.paint_widget)
+        self.scroll_area.verticalScrollBar().valueChanged.connect(lambda _: self.paint_widget.update())
+        self.main_layout.addWidget(self.scroll_area)
+        
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.on_custom_context)
         
     def setHtml(self, html: str):
-        # We ignore the HTML argument and render using the PGN tree in self.move_manager.game
         self.rebuild_layout()
         
     def setStyleSheet(self, stylesheet: str):
-        # Parse font-family from the stylesheet to keep dynamic figurine fonts synchronized
         font_match = re.search(r"font-family:\s*([^;\}]+)", stylesheet)
         if font_match:
             self.font_family = font_match.group(1).replace("'", "").replace("\"", "").strip()
             
-        # Parse font-size from stylesheet
         size_match = re.search(r"font-size:\s*(\d+)px", stylesheet)
         if size_match:
-            self.base_font_size = max(10, int(size_match.group(1)) - 4)
+            self.base_font_size = max(11, int(size_match.group(1)) - 6)
             
         self.paint_widget.update()
+        self.header_widget.update()
         
-    def rebuild_layout(self):
+    def rebuild_layout(self, force=False):
         self.is_dark = self.move_manager.html_style
         
-        self.flat_nodes = []
-        self.blocks = []
+        # Check if PGN nodes structure has changed to determine if we should rebuild the layout cache
+        current_nodes = getattr(self.move_manager, 'nodes', [])
+        nodes_changed = True
+        if hasattr(self, 'cached_nodes') and len(self.cached_nodes) == len(current_nodes):
+            nodes_changed = False
+            for i in range(len(current_nodes)):
+                if self.cached_nodes[i] is not current_nodes[i]:
+                    nodes_changed = True
+                    break
+                    
+        layout_width = self.paint_widget.width() - 30
+        if layout_width <= 0:
+            layout_width = 300
+            
+        width_changed = (not hasattr(self, 'last_layout_width') or self.last_layout_width != layout_width)
         
-        show_comments = self.show_comments
-        show_variations = self.show_variations
-        layout_mode = self.layout_mode
-        
-        game = self.move_manager.game
-        if game.variations:
-            first_move = game.variations[0]
-            if layout_mode == 0:
-                self.traverse_layout_a(first_move, 0, self.blocks, self.flat_nodes, show_comments, show_variations)
-            else:
-                self.traverse_layout_b(first_move, 0, self.blocks, self.flat_nodes, show_comments, show_variations)
+        if force or nodes_changed or width_changed or getattr(self, 'layout_invalid', False):
+            self.cached_nodes = list(current_nodes)
+            self.last_layout_width = layout_width
+            self.layout_invalid = False
+            
+            headers = {}
+            if hasattr(self.move_manager, 'game') and self.move_manager.game:
+                headers = self.move_manager.game.headers
                 
-        self.paint_widget.set_blocks(self.blocks)
+            if headers:
+                white = headers.get("White", "?")
+                black = headers.get("Black", "?")
+                event_name = headers.get("Event", "?")
+                is_new_game = (white == "?" and black == "?" and (event_name == "?" or event_name == "Chess Analysis" or not event_name))
+                
+                if is_new_game:
+                    self.header_widget.setFixedHeight(42 + 20)
+                else:
+                    self.header_widget.setFixedHeight(70 + 20)
+            else:
+                self.header_widget.setFixedHeight(0)
+                
+            self.header_widget.update()
+            
+            self.flat_nodes = []
+            self.blocks = []
+            
+            game = self.move_manager.game
+            if game.variations:
+                first_move = game.variations[0]
+                if self.layout_mode == 0:
+                    self.traverse_layout_a(first_move, 0, self.blocks, self.flat_nodes, self.show_comments, self.show_variations)
+                else:
+                    self.traverse_layout_b(first_move, 0, self.blocks, self.flat_nodes, self.show_comments, self.show_variations)
+                    
+            self.paint_widget.compute_layout(self.blocks)
+            
         self.update_active_index()
         
     def update_active_index(self):
@@ -392,8 +507,8 @@ class QPainterPGNBrowser(QScrollArea):
                 break
                 
         if active_rect:
-            scrollbar = self.verticalScrollBar()
-            viewport_h = self.viewport().height()
+            scrollbar = self.scroll_area.verticalScrollBar()
+            viewport_h = self.scroll_area.viewport().height()
             target_y = active_rect.y() - viewport_h // 2
             target_y = max(scrollbar.minimum(), min(scrollbar.maximum(), target_y))
             scrollbar.setValue(target_y)
@@ -401,7 +516,6 @@ class QPainterPGNBrowser(QScrollArea):
     def jump_to_move(self, index):
         if 0 <= index < len(self.flat_nodes):
             self.move_manager.jump_to(index)
-            # Emit anchorClicked signal with QUrl for standard application logic
             self.anchorClicked.emit(QUrl(f"move({index})"))
 
     def go_next(self):
@@ -417,7 +531,6 @@ class QPainterPGNBrowser(QScrollArea):
     def go_last(self):
         self.move_manager.jump_to_end()
 
-    # --- Traversals copied from qpainter_demo.py ---
     def traverse_layout_a(self, node, level, blocks, flat_nodes, show_comments, show_variations):
         curr = node
         while curr is not None:
@@ -429,25 +542,40 @@ class QPainterPGNBrowser(QScrollArea):
             flat_nodes.append(curr)
             curr.flat_index = move_idx
             
+            # Extract compact eval if present
+            eval_text = ""
+            if self.show_eval and curr.comment:
+                eval_match = re.search(r'\[%eval\s+([^\]]+)\]', curr.comment)
+                if eval_match:
+                    eval_text = format_compact_eval(eval_match.group(1))
+            
             if board.turn == chess.WHITE:
                 block = PaintBlock(level)
                 block.tokens.append(Token("num", f"{move_num}.", level=level))
                 block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                if eval_text:
+                    block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 blocks.append(block)
             else:
                 if blocks and blocks[-1].tokens and blocks[-1].tokens[-1].token_type == "move" and blocks[-1].level == level and "..." not in blocks[-1].tokens[0].text:
                     blocks[-1].tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                    if eval_text:
+                        blocks[-1].tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 else:
                     block = PaintBlock(level)
                     block.tokens.append(Token("num", f"{move_num}...", level=level))
                     block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                    if eval_text:
+                        block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                     blocks.append(block)
                     
             if show_comments and curr.comment:
-                cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '').strip()
-                if cleaned:
-                    if blocks:
-                        blocks[-1].tokens.append(Token("comment", cleaned, level=level))
+                cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '')
+                cleaned = cleaned.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+                words = cleaned.split()
+                if blocks:
+                    for word in words:
+                        blocks[-1].tokens.append(Token("comment", word, level=level))
                     
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
@@ -497,10 +625,20 @@ class QPainterPGNBrowser(QScrollArea):
                     
             current_block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
             
+            # Extract and add compact eval if present
+            if self.show_eval and curr.comment:
+                eval_match = re.search(r'\[%eval\s+([^\]]+)\]', curr.comment)
+                if eval_match:
+                    eval_text = format_compact_eval(eval_match.group(1))
+                    if eval_text:
+                        current_block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
+            
             if show_comments and curr.comment:
-                cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '').strip()
-                if cleaned:
-                    current_block.tokens.append(Token("comment", cleaned, level=level))
+                cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '')
+                cleaned = cleaned.replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ')
+                words = cleaned.split()
+                for word in words:
+                    current_block.tokens.append(Token("comment", word, level=level))
                         
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
@@ -525,7 +663,6 @@ class QPainterPGNBrowser(QScrollArea):
             else:
                 curr = None
 
-    # --- Context Menu Actions ---
     def on_custom_context(self, point):
         paint_point = self.paint_widget.mapFrom(self, point)
         

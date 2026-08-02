@@ -591,6 +591,10 @@ class ChessApp(QMainWindow):
         
         self.move_manager.font_family = self.current_figurine_font
         self.move_manager.create_mapping()
+        
+        show_eval = settings.value("show_eval_annotations", True, type=bool)
+        self.browser.show_eval = show_eval
+        self.browser.rebuild_layout(force=True)
         self.display_pgn()
 
         self.browser.setStyleSheet(

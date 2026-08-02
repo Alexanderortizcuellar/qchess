@@ -11,8 +11,10 @@ A feature-rich, modern chess application built with Python and PyQt5, featuring 
 - **Advanced PGN Browser**: 
   - Load and save PGN files.
   - Interactive move navigation with variation support.
-  - HTML-styled move list with Light and Dark themes.
-  - Add and edit comments directly on moves.
+  - Custom viewport-based `QPainter` rendering engine for high performance on large PGNs.
+  - Add, edit, and view comments rendered cleanly inline.
+  - Compact inline engine evaluation annotations next to moves.
+  - Option to toggle engine evaluations in settings.
 - **Puzzle Trainer**: A dedicated mode for practicing chess puzzles.
   - Free and Timed modes.
   - Hint system and move validation.
@@ -46,7 +48,13 @@ A feature-rich, modern chess application built with Python and PyQt5, featuring 
 
 ## How to Run
 
-Launch the application by running the `main.py` script located in the `src` directory:
+Launch the application directly from the root directory using:
+
+```bash
+python main.py
+```
+
+Or run the entry script inside the `src` folder:
 
 ```bash
 python src/main.py
@@ -54,21 +62,22 @@ python src/main.py
 
 ## Project Structure
 
+- `main.py`: Root-level entry point launcher.
 - `src/main.py`: Entry point of the application, handles startup and styling.
 - `src/puzzles.py`: Puzzle training module and UI.
 - `src/gui/`: User interface components.
   - `app.py`: Main application window and core orchestration logic.
-  - `widgets/`: Reusable UI components like `chessboard.py`, `eval_bar.py`, and `pgn_browser.py`.
+  - `widgets/`: Reusable UI components like `chessboard.py`, `eval_bar.py`, and `painter_pgn_browser.py`.
   - `dialogs/`: UI dialogs for settings, variations, and board editing.
 - `src/core/`: Core business logic.
   - `engine.py`: UCI engine wrapper for analysis and evaluation.
   - `move_manager.py`: Logic for managing game history, PGNs, and variations.
   - `opening_explorer.py`: Logic for exploring chess openings.
   - `pgn_parser.py`: PGN parsing utilities.
-  - `pgn_to_html.py`: PGN to HTML conversion logic.
+  - `pgn_to_html.py`: PGN to HTML conversion logic (kept as fallback).
 - `src/utils/`: Utility functions and helpers.
   - `helpers.py`: Common UI helper functions.
-- `assets/`: Static assets like `style.qss` and `icon.png`.
+- `assets/`: Static assets like `style.qss`, `light_style.qss`, and `icon.png`.
 
 ## Technical Stack
 
