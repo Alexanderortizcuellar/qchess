@@ -446,9 +446,8 @@ class QPainterPGNBrowser(QScrollArea):
             if show_comments and curr.comment:
                 cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '').strip()
                 if cleaned:
-                    comment_block = PaintBlock(level)
-                    comment_block.tokens.append(Token("comment", f"{{{cleaned}}}", level=level))
-                    blocks.append(comment_block)
+                    if blocks:
+                        blocks[-1].tokens.append(Token("comment", cleaned, level=level))
                     
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
@@ -501,15 +500,7 @@ class QPainterPGNBrowser(QScrollArea):
             if show_comments and curr.comment:
                 cleaned = re.sub(r'\[%[^\]]+\]', '', curr.comment).replace('{', '').replace('}', '').strip()
                 if cleaned:
-                    if level == 0:
-                        current_block = None
-                        comment_block = PaintBlock(level=0)
-                        comment_block.tokens.append(Token("comment", f"{{{cleaned}}}", level=0))
-                        blocks.append(comment_block)
-                        need_prefix = True
-                    else:
-                        current_block.tokens.append(Token("comment", f"{{{cleaned}}}", level=level))
-                        need_prefix = True
+                    current_block.tokens.append(Token("comment", cleaned, level=level))
                         
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
