@@ -45,8 +45,12 @@ class MoveManager(QObject):
         self.is_dirty = True
 
     def load_pgn_file(self, filename: str):
-        with open(filename, "r") as f:
-            game = chess.pgn.read_game(f)
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                game = chess.pgn.read_game(f)
+        except UnicodeDecodeError:
+            with open(filename, "r", encoding="latin-1") as f:
+                game = chess.pgn.read_game(f)
         self.game = game
         self.current_node = self.game
         self.create_mapping()

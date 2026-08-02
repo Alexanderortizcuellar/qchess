@@ -956,7 +956,7 @@ class ChessApp(QMainWindow):
                 self, "Save", ".", "Pgn Files (*.pgn);;All (*)"
             )
             if ok:
-                with open(file, "w") as f:
+                with open(file, "w", encoding="utf-8") as f:
                     f.write(self.move_manager.get_pgn())
                 self.statusBar().showMessage(f"PGN saved to {file}")
                 self.move_manager.is_dirty = False
