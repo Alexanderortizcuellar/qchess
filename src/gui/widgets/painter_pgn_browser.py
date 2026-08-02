@@ -82,7 +82,8 @@ class QPainterBrowser(QWidget):
         painter.fillRect(self.rect(), bg_color)
         
         # Setup fonts
-        font_size = 14 if self.parent_browser.cb_compact else 15
+        base_size = self.parent_browser.base_font_size
+        font_size = base_size - 2 if self.parent_browser.cb_compact else base_size
         font_family = self.parent_browser.font_family
         normal_font = QFont(font_family, font_size)
         bold_font = QFont(font_family, font_size, QFont.Bold)
@@ -104,84 +105,104 @@ class QPainterBrowser(QWidget):
             card_padding = 15
             card_width = width
             
-            # Fonts for header
-            header_title_font = QFont("Segoe UI", 16, QFont.Bold)
-            header_sub_font = QFont("Segoe UI", 11)
-            
-            # Setup player names
-            white = headers.get("White", "Unknown White")
-            black = headers.get("Black", "Unknown Black")
-            white_elo = headers.get("WhiteElo", "")
-            black_elo = headers.get("BlackElo", "")
-            
-            white_str = f"{white} ({white_elo})" if white_elo else white
-            black_str = f"{black} ({black_elo})" if black_elo else black
-            
-            # Subtitle information
+            # Check if this is a default new game (no real game loaded yet)
+            white = headers.get("White", "?")
+            black = headers.get("Black", "?")
             event = headers.get("Event", "?")
-            site = headers.get("Site", "?")
-            date = headers.get("Date", "?")
-            result = headers.get("Result", "*")
-            eco = headers.get("ECO", "")
             
-            sub_parts = [
-                f"Event: {event}",
-                f"Site: {site}",
-                f"Date: {date}",
-                f"Result: {result}"
-            ]
-            if eco:
-                sub_parts.append(f"ECO: {eco}")
-            sub_text = " | ".join(sub_parts)
+            is_new_game = (white == "?" and black == "?" and (event == "?" or event == "Chess Analysis" or not event))
             
-            fm_title = QFontMetrics(header_title_font)
-            fm_sub = QFontMetrics(header_sub_font)
-            
-            header_height = 90
-            card_rect = QRect(card_margin, 20, card_width, header_height)
-            
-            # Draw card rounded rect
-            painter.setPen(header_border)
-            painter.setBrush(header_bg)
-            painter.drawRoundedRect(card_rect, 6, 6)
-            
-            # Elide player names if too long
-            available_width = card_width - (card_padding * 2)
-            vs_w = fm_title.width(" vs ")
-            max_name_w = (available_width - vs_w) // 2
-            
-            white_elided = fm_title.elidedText(white_str, Qt.ElideRight, max_name_w)
-            black_elided = fm_title.elidedText(black_str, Qt.ElideRight, max_name_w)
-            sub_text_elided = fm_sub.elidedText(sub_text, Qt.ElideRight, available_width)
-            
-            # Draw Title: White vs Black
-            title_y = 20 + card_padding + fm_title.ascent()
-            title_x = card_margin + card_padding
-            
-            painter.setFont(header_title_font)
-            
-            painter.setPen(text_color)
-            painter.drawText(title_x, title_y, white_elided)
-            title_x += fm_title.width(white_elided)
-            
-            painter.setPen(header_vs)
-            painter.drawText(title_x, title_y, " vs ")
-            title_x += vs_w
-            
-            painter.setPen(text_color)
-            painter.drawText(title_x, title_y, black_elided)
-            
-            # Draw Subtitle
-            sub_y = 20 + card_padding + fm_title.height() + 8 + fm_sub.ascent()
-            sub_x = card_margin + card_padding
-            painter.setFont(header_sub_font)
-            painter.setPen(header_sub)
-            painter.drawText(sub_x, sub_y, sub_text_elided)
-            
-            # Reset brush & pen
-            painter.setBrush(Qt.NoBrush)
-            
-            header_offset = 20 + header_height + 20
+            if is_new_game:
+                header_height = 50
+                card_rect = QRect(card_margin, 20, card_width, header_height)
+                
+                # Draw card rounded rect
+                painter.setPen(header_border)
+                painter.setBrush(header_bg)
+                painter.drawRoundedRect(card_rect, 6, 6)
+                
+                # Draw "New Game"
+                painter.setFont(QFont("Segoe UI", 13, QFont.Bold))
+                painter.setPen(text_color)
+                fm_new = QFontMetrics(painter.font())
+                new_str = "New Game"
+                title_y = 20 + (header_height - fm_new.height()) // 2 + fm_new.ascent()
+                painter.drawText(card_margin + card_padding, title_y, new_str)
+                
+                painter.setBrush(Qt.NoBrush)
+                header_offset = 20 + header_height + 20
+            else:
+                # Fonts for header
+                header_title_font = QFont("Segoe UI", 16, QFont.Bold)
+                header_sub_font = QFont("Segoe UI", 11)
+                
+                # Setup player names
+                white_elo = headers.get("WhiteElo", "")
+                black_elo = headers.get("BlackElo", "")
+                
+                white_str = f"{white} ({white_elo})" if white_elo else white
+                black_str = f"{black} ({black_elo})" if black_elo else black
+                
+                # Subtitle information
+                site = headers.get("Site", "?")
+                date = headers.get("Date", "?")
+                result = headers.get("Result", "*")
+                eco = headers.get("ECO", "")
+                
+                # Just show values without keys
+                sub_parts = [event, site, date, result]
+                if eco:
+                    sub_parts.append(eco)
+                sub_text = " | ".join(sub_parts)
+                
+                fm_title = QFontMetrics(header_title_font)
+                fm_sub = QFontMetrics(header_sub_font)
+                
+                header_height = 90
+                card_rect = QRect(card_margin, 20, card_width, header_height)
+                
+                # Draw card rounded rect
+                painter.setPen(header_border)
+                painter.setBrush(header_bg)
+                painter.drawRoundedRect(card_rect, 6, 6)
+                
+                # Elide player names if too long
+                available_width = card_width - (card_padding * 2)
+                vs_w = fm_title.width(" vs ")
+                max_name_w = (available_width - vs_w) // 2
+                
+                white_elided = fm_title.elidedText(white_str, Qt.ElideRight, max_name_w)
+                black_elided = fm_title.elidedText(black_str, Qt.ElideRight, max_name_w)
+                sub_text_elided = fm_sub.elidedText(sub_text, Qt.ElideRight, available_width)
+                
+                # Draw Title: White vs Black
+                title_y = 20 + card_padding + fm_title.ascent()
+                title_x = card_margin + card_padding
+                
+                painter.setFont(header_title_font)
+                
+                painter.setPen(text_color)
+                painter.drawText(title_x, title_y, white_elided)
+                title_x += fm_title.width(white_elided)
+                
+                painter.setPen(header_vs)
+                painter.drawText(title_x, title_y, " vs ")
+                title_x += vs_w
+                
+                painter.setPen(text_color)
+                painter.drawText(title_x, title_y, black_elided)
+                
+                # Draw Subtitle
+                sub_y = 20 + card_padding + fm_title.height() + 8 + fm_sub.ascent()
+                sub_x = card_margin + card_padding
+                painter.setFont(header_sub_font)
+                painter.setPen(header_sub)
+                painter.drawText(sub_x, sub_y, sub_text_elided)
+                
+                # Reset brush & pen
+                painter.setBrush(Qt.NoBrush)
+                
+                header_offset = 20 + header_height + 20
             
         self.line_height = fm.height() + 8
         margin_left = 15
@@ -303,6 +324,7 @@ class QPainterPGNBrowser(QScrollArea):
         self.show_variations = True
         self.layout_mode = 1  # 1 = ChessBase Blocks
         self.font_family = "Segoe UI"
+        self.base_font_size = 14
         self.active_index = -1
         self.flat_nodes = []
         self.blocks = []
@@ -324,8 +346,7 @@ class QPainterPGNBrowser(QScrollArea):
         # Parse font-size from stylesheet
         size_match = re.search(r"font-size:\s*(\d+)px", stylesheet)
         if size_match:
-            # Adjust compact mode depending on size or keep defaults
-            pass
+            self.base_font_size = max(10, int(size_match.group(1)) - 4)
             
         self.paint_widget.update()
         
