@@ -4,7 +4,7 @@ import chess
 import chess.pgn
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from core.pgn_to_html import pgn_to_html
+from core.pgn_to_html import flatten_nodes_pgn_order
 
 
 class MoveManager(QObject):
@@ -30,11 +30,26 @@ class MoveManager(QObject):
         self.create_mapping()
         self.is_dirty = True
 
+    def cache_node_metadata(self, game_node):
+        """Traverse game tree once and cache san, move_number, and turn on every node."""
+        stack = [(game_node, game_node.board())]
+        while stack:
+            parent_node, board = stack.pop()
+            for var in parent_node.variations:
+                b_copy = board.copy(stack=False)
+                san = b_copy.san(var.move)
+                var.san = san
+                var.move_number = b_copy.fullmove_number
+                var.turn = b_copy.turn
+                b_copy.push(var.move)
+                stack.append((var, b_copy))
+
     def update_pgn(self, pgn_str: str):
         pgn_io = StringIO(pgn_str)
         game = chess.pgn.read_game(pgn_io)
         if game:
             self.game = game
+            self.cache_node_metadata(self.game)
             self.current_node = self.game
             self.create_mapping()
             self.is_dirty = True
@@ -52,6 +67,7 @@ class MoveManager(QObject):
             with open(filename, "r", encoding="latin-1") as f:
                 game = chess.pgn.read_game(f)
         self.game = game
+        self.cache_node_metadata(self.game)
         self.current_node = self.game
         self.create_mapping()
         self.is_dirty = False
@@ -65,8 +81,18 @@ class MoveManager(QObject):
                 self.current_node = var
                 return
 
-        # Otherwise, create new variation
+        # Compute SAN while board is active at current position
+        board = self.current_node.board()
+        san = board.san(move)
+        move_number = board.fullmove_number
+        turn = board.turn
+
+        # Otherwise, create new variation and cache SAN
         temp_node = self.current_node.add_variation(move)
+        temp_node.san = san
+        temp_node.move_number = move_number
+        temp_node.turn = turn
+
         self.current_node = temp_node
         if self.current_node.board().result() != "*":
             self.game.headers["Result"] = self.current_node.board().result()
@@ -171,8 +197,8 @@ class MoveManager(QObject):
         return str(self.game)
 
     def create_mapping(self):
-        show_cls = getattr(self, "show_classifications", True)
-        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style, self.font_family, show_classifications=show_cls)
+        self.html = ""
+        self.nodes = flatten_nodes_pgn_order(self.game)
         # Emit empty string to avoid expensive PGN serialization during navigation
         self.pgnChanged.emit("")
         self.activeNodeChanged.emit()

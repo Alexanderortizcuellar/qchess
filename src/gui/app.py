@@ -124,13 +124,19 @@ class ChessApp(QMainWindow):
         central_layout.addWidget(board_group, stretch=1)
 
         # --- Docks ---
-        self.setDockOptions(QMainWindow.AnimatedDocks | QMainWindow.AllowTabbedDocks)
+        self.setDockOptions(
+            QMainWindow.AnimatedDocks
+            | QMainWindow.AllowTabbedDocks
+            | QMainWindow.AllowNestedDocks
+            | QMainWindow.GroupedDragging
+        )
 
         # 1. Analysis Dock
         self.analysis_widget = AnalysisWidget(self)
         self.analysis_dock = QDockWidget("Engine Analysis", self)
         self.analysis_dock.setWidget(self.analysis_widget)
         self.analysis_dock.setObjectName("analysis_dock")
+        self.analysis_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.RightDockWidgetArea, self.analysis_dock)
 
         # Game / Train Widget (will be swapped into analysis_dock dynamically in Game / Train mode)
@@ -241,6 +247,7 @@ class ChessApp(QMainWindow):
         self.pgn_dock = QDockWidget("PGN Browser", self)
         self.pgn_dock.setWidget(pgn_container)
         self.pgn_dock.setObjectName("pgn_dock")
+        self.pgn_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
 
         # Apply figurine font to PGN browser
@@ -253,6 +260,7 @@ class ChessApp(QMainWindow):
         self.explorer_dock = QDockWidget("Opening Explorer", self)
         self.explorer_dock.setWidget(self.opxl)
         self.explorer_dock.setObjectName("explorer_dock")
+        self.explorer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.RightDockWidgetArea, self.explorer_dock)
         self.explorer_dock.hide()
 
@@ -261,7 +269,9 @@ class ChessApp(QMainWindow):
         self.analytics_dock = QDockWidget("Game Analytics", self)
         self.analytics_dock.setWidget(self.analytics_widget)
         self.analytics_dock.setObjectName("analytics_dock")
+        self.analytics_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.analytics_dock)
+        self.analytics_dock.hide()
         self.analytics_widget.moveIndexRequested.connect(self.move_manager.jump_to)
 
         # 5. Game Review (Analysis Summary) Dock
@@ -269,15 +279,27 @@ class ChessApp(QMainWindow):
         self.summary_dock = QDockWidget("Game Review", self)
         self.summary_dock.setWidget(self.summary_widget)
         self.summary_dock.setObjectName("summary_dock")
+        self.summary_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
         self.addDockWidget(Qt.RightDockWidgetArea, self.summary_dock)
         self.tabifyDockWidget(self.pgn_dock, self.summary_dock)
+        self.summary_dock.hide()
 
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
         self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
-        QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
+
+        # Restore saved window state and geometry if available, else apply defaults
+        from PyQt5.QtCore import QSettings
+        layout_settings = QSettings("TestChessApp", "Layout")
+        saved_geometry = layout_settings.value("geometry")
+        saved_state = layout_settings.value("windowState")
+        if saved_geometry and saved_state:
+            QTimer.singleShot(0, lambda: (self.restoreGeometry(saved_geometry), self.restoreState(saved_state)))
+        else:
+            QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
 
         # --- Toolbar & Menubar ---
-        self.toolbar = QToolBar()
+        self.toolbar = QToolBar("Main Toolbar")
+        self.toolbar.setObjectName("main_toolbar")
         self.addToolBar(self.toolbar)
         self.init_menubar()
         self.display_pgn()
@@ -513,6 +535,15 @@ class ChessApp(QMainWindow):
         docks_menu.addAction(self.explorer_dock.toggleViewAction())
         docks_menu.addAction(self.analytics_dock.toggleViewAction())
         docks_menu.addAction(self.summary_dock.toggleViewAction())
+
+        self.analytics_dock.visibilityChanged.connect(
+            lambda visible: self.analytics_widget.update_data(self.move_manager.game, self.move_manager.current_node)
+            if visible else None
+        )
+        self.summary_dock.visibilityChanged.connect(
+            lambda visible: self.summary_widget.update_data(self.move_manager.game)
+            if visible else None
+        )
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
@@ -763,9 +794,9 @@ class ChessApp(QMainWindow):
         self.chessboard.update_board(
             self.move_manager.get_board().fen(), last_move
         )
-        if hasattr(self, "analytics_widget"):
+        if hasattr(self, "analytics_dock") and self.analytics_dock.isVisible():
             self.analytics_widget.update_data(self.move_manager.game, node)
-        if hasattr(self, "summary_widget"):
+        if hasattr(self, "summary_dock") and self.summary_dock.isVisible():
             self.summary_widget.update_data(self.move_manager.game)
 
     def on_anchor_clicked(self, url: QUrl):
@@ -1051,6 +1082,11 @@ class ChessApp(QMainWindow):
         return super().eventFilter(watched, event)
 
     def closeEvent(self, a0):
+        from PyQt5.QtCore import QSettings
+        layout_settings = QSettings("TestChessApp", "Layout")
+        layout_settings.setValue("geometry", self.saveGeometry())
+        layout_settings.setValue("windowState", self.saveState())
+
         if self.move_manager.is_dirty:
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Unsaved Changes")

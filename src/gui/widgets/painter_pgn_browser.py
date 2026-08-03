@@ -557,9 +557,18 @@ class QPainterPGNBrowser(QWidget):
     def traverse_layout_a(self, node, level, blocks, flat_nodes, show_comments, show_variations):
         curr = node
         while curr is not None:
-            board = curr.parent.board()
-            move_num = board.fullmove_number
-            san = board.san(curr.move)
+            if hasattr(curr, 'san') and hasattr(curr, 'move_number') and hasattr(curr, 'turn'):
+                san = curr.san
+                move_num = curr.move_number
+                is_white_turn = (curr.turn == chess.WHITE)
+            else:
+                board = curr.parent.board()
+                move_num = board.fullmove_number
+                san = board.san(curr.move)
+                is_white_turn = (board.turn == chess.WHITE)
+                curr.san = san
+                curr.move_number = move_num
+                curr.turn = board.turn
             
             move_idx = len(flat_nodes)
             flat_nodes.append(curr)
@@ -585,7 +594,7 @@ class QPainterPGNBrowser(QWidget):
                             except ValueError:
                                 pass
             
-            if board.turn == chess.WHITE:
+            if is_white_turn:
                 block = PaintBlock(level)
                 block.tokens.append(Token("num", f"{move_num}.", level=level))
                 block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
@@ -629,9 +638,18 @@ class QPainterPGNBrowser(QWidget):
         need_prefix = True
         
         while curr is not None:
-            board = curr.parent.board()
-            move_num = board.fullmove_number
-            san = board.san(curr.move)
+            if hasattr(curr, 'san') and hasattr(curr, 'move_number') and hasattr(curr, 'turn'):
+                san = curr.san
+                move_num = curr.move_number
+                is_white_turn = (curr.turn == chess.WHITE)
+            else:
+                board = curr.parent.board()
+                move_num = board.fullmove_number
+                san = board.san(curr.move)
+                is_white_turn = (board.turn == chess.WHITE)
+                curr.san = san
+                curr.move_number = move_num
+                curr.turn = board.turn
             
             move_idx = len(flat_nodes)
             flat_nodes.append(curr)
@@ -648,7 +666,7 @@ class QPainterPGNBrowser(QWidget):
                     blocks.append(current_block)
                     need_prefix = True
                     
-            if board.turn == chess.WHITE:
+            if is_white_turn:
                 if need_prefix:
                     current_block.tokens.append(Token("num", f"{move_num}.", level=level))
                     need_prefix = False

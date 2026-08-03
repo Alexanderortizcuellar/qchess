@@ -19,7 +19,6 @@ def main():
     app = QApplication(sys.argv)
 
     # Load splash image
-    import os
     current_dir = os.path.dirname(os.path.abspath(__file__))
     assets_dir = os.path.join(os.path.dirname(current_dir), "assets")
     
@@ -32,14 +31,16 @@ def main():
     # load stylesheet
     style = load_stylesheet(os.path.join(assets_dir, "style.qss"))
     app.setStyleSheet(style)
-    # import modules 
-    from gui.app import ChessApp
+    # import application controller
+    from gui.app_controller import ApplicationController
 
     splash.finish(None)  # close splash
-    window = ChessApp()
-    window.setWindowIcon(QIcon(pix))
-    window.set_style("dark")
-    window.show()
+
+    controller = ApplicationController()
+    controller.set_icon(QIcon(pix))
+    controller.set_style("dark")
+    controller.show()
+
     sys.exit(app.exec_())
 
 
