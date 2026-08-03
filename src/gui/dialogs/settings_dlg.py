@@ -61,6 +61,8 @@ class SettingsDialog(QDialog):
         browser_form = QFormLayout(browser_group)
         self.show_eval_cb = QCheckBox("Show Engine Evaluations inline")
         browser_form.addRow(self.show_eval_cb)
+        self.show_classifications_cb = QCheckBox("Show Move Classification colors")
+        browser_form.addRow(self.show_classifications_cb)
         layout.addWidget(browser_group)
 
         # --- Mode Settings ---
@@ -106,6 +108,9 @@ class SettingsDialog(QDialog):
         show_eval = self.settings.value("show_eval_annotations", True, type=bool)
         self.show_eval_cb.setChecked(show_eval)
 
+        show_cls = self.settings.value("show_move_classifications", True, type=bool)
+        self.show_classifications_cb.setChecked(show_cls)
+
         pgn_path = self.settings.value(
             "explorer_pgn_path",
             r"C:\Users\ASUS\programming\qt_programs\chess\downloader\alex.pgn"
@@ -121,6 +126,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
         self.settings.setValue("show_eval_annotations", self.show_eval_cb.isChecked())
+        self.settings.setValue("show_move_classifications", self.show_classifications_cb.isChecked())
         self.settings.setValue("explorer_pgn_path", self.pgn_path_edit.text())
         self.settings.setValue("app_mode", self.mode_combo.currentText())
         self.accept()
@@ -132,6 +138,7 @@ class SettingsDialog(QDialog):
             "animation_duration": self.anim_duration.value(),
             "use_figurine_font": self.figurine_font_cb.isChecked(),
             "show_eval_annotations": self.show_eval_cb.isChecked(),
+            "show_move_classifications": self.show_classifications_cb.isChecked(),
             "explorer_pgn_path": self.pgn_path_edit.text(),
             "app_mode": self.mode_combo.currentText()
         }

@@ -171,7 +171,8 @@ class MoveManager(QObject):
         return str(self.game)
 
     def create_mapping(self):
-        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style, self.font_family)
+        show_cls = getattr(self, "show_classifications", True)
+        self.html, self.nodes = pgn_to_html(self.game, self.current_node, self.html_style, self.font_family, show_classifications=show_cls)
         # Emit empty string to avoid expensive PGN serialization during navigation
         self.pgnChanged.emit("")
         self.activeNodeChanged.emit()

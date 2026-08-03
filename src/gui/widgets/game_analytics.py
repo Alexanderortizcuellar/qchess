@@ -16,6 +16,7 @@ class EvaluationChart(QWidget):
         self.setMouseTracking(True)
         self.data = []  # list of floats (evaluations)
         self.labels = [] # list of strings (move labels)
+        self.classifications = [] # list of classifications
         self.highlight_index = -1
         self.hover_index = -1
         self.is_dark = True
@@ -25,10 +26,11 @@ class EvaluationChart(QWidget):
         self.is_dark = is_dark
         self.update()
         
-    def update_data(self, evals, labels, highlight_index):
+    def update_data(self, evals, labels, highlight_index, classifications=None):
         self.data = evals
         self.labels = labels
         self.highlight_index = highlight_index
+        self.classifications = classifications if classifications is not None else []
         self.update()
 
     def mousePressEvent(self, event):
@@ -219,6 +221,23 @@ class EvaluationChart(QWidget):
             path.lineTo(pt)
         painter.setPen(QPen(line_color, 2, Qt.SolidLine))
         painter.drawPath(path)
+        
+        # Draw classification markers
+        CLASSIFICATION_COLORS = {
+            4: QColor("#FFD54F"),  # Inaccuracy
+            5: QColor("#FF9800"),  # Mistake
+            6: QColor("#E53935"),  # Blunder
+            8: QColor("#FF8A80"),  # Miss
+        }
+        if hasattr(self, "classifications") and self.classifications:
+            for i, pt in enumerate(points):
+                if i < len(self.classifications):
+                    cls = self.classifications[i]
+                    if cls in CLASSIFICATION_COLORS:
+                        painter.setBrush(CLASSIFICATION_COLORS[cls])
+                        pen_col = QColor("#ffffff") if self.is_dark else QColor("#000000")
+                        painter.setPen(QPen(pen_col, 1))
+                        painter.drawEllipse(pt, 4, 4)
         
         # Draw cursor
         if 0 <= self.highlight_index < N:
@@ -559,6 +578,7 @@ class GameAnalytics(QWidget):
         time_spent_list = []
         turns = []
         labels = []
+        classifications = []
         
         last_eval = 0.0
         
@@ -612,6 +632,20 @@ class GameAnalytics(QWidget):
                 last_eval = eval_val
             evals.append(eval_val)
             
+            # Classification
+            cls_val = None
+            if comment:
+                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', comment)
+                if alz_match:
+                    cls_tokens = alz_match.group(1).split()
+                    for token in cls_tokens:
+                        if token.startswith("cls="):
+                            try:
+                                cls_val = int(token.split("=")[1])
+                            except ValueError:
+                                pass
+            classifications.append(cls_val)
+            
             # Clock / Time spent
             clk_val = None
             clk_match = re.search(r'\[%clk\s+(\d+):(\d+):(\d+(?:\.\d+)?)\]', comment)
@@ -633,5 +667,5 @@ class GameAnalytics(QWidget):
             time_spent_list.append(time_spent)
             
         self.path_nodes = path
-        self.eval_chart.update_data(evals, labels, highlight_index)
+        self.eval_chart.update_data(evals, labels, highlight_index, classifications)
         self.clock_chart.update_data(time_spent_list, turns, labels, highlight_index)

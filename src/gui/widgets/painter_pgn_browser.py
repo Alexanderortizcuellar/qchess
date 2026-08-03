@@ -36,12 +36,13 @@ class PaintBlock:
 
 
 class Token:
-    def __init__(self, token_type, text, move_idx=-1, level=0):
+    def __init__(self, token_type, text, move_idx=-1, level=0, classification=None):
         self.token_type = token_type
         self.text = text
         self.move_idx = move_idx
         self.level = level
         self.rect = None
+        self.classification = classification
 
 
 class QPainterBrowser(QWidget):
@@ -148,8 +149,7 @@ class QPainterBrowser(QWidget):
             var_move_color = QColor("#8b8987")
             comment_color = QColor("#81c784")
             eval_color = QColor("#4fc3f7")
-            highlight_bg = QColor("#403d39")
-            highlight_text_col = QColor("#e6912c")
+            highlight_bg = QColor("#1a365d")
             bracket_color = QColor("#8b8987")
         else:
             bg_color = QColor("#f1f1f1")
@@ -159,8 +159,7 @@ class QPainterBrowser(QWidget):
             var_move_color = QColor("#777777")
             comment_color = QColor("#2e7d32")
             eval_color = QColor("#0288d1")
-            highlight_bg = QColor("#e1e1e1")
-            highlight_text_col = QColor("#e6912c")
+            highlight_bg = QColor("#dbeafe")
             bracket_color = QColor("#999999")
             
         # Draw background
@@ -196,13 +195,36 @@ class QPainterBrowser(QWidget):
                     
                 # Draw token text
                 if token.token_type == "move":
-                    if token.move_idx == active_index:
+                    if is_dark:
+                        cls_colors = {
+                            4: QColor("#FFD54F"),  # Inaccuracy
+                            5: QColor("#FF9800"),  # Mistake
+                            6: QColor("#FF5252"),  # Blunder
+                            7: QColor("#28c2a4"),  # Brilliant
+                            8: QColor("#FF8A80"),  # Miss
+                        }
+                    else:
+                        cls_colors = {
+                            4: QColor("#b58900"),  # Inaccuracy
+                            5: QColor("#e65100"),  # Mistake
+                            6: QColor("#b71c1c"),  # Blunder
+                            7: QColor("#28c2a4"),  # Brilliant
+                            8: QColor("#d32f2f"),  # Miss
+                        }
+
+                    is_active = (token.move_idx == active_index)
+                    if is_active:
                         painter.fillRect(token.rect, highlight_bg)
-                        painter.setPen(highlight_text_col)
                         painter.setFont(bold_font)
                     else:
                         painter.setFont(bold_font if token.level == 0 else normal_font)
+                        
+                    show_classifications = getattr(self.parent_browser, "show_classifications", True)
+                    if show_classifications and hasattr(token, 'classification') and token.classification in cls_colors:
+                        painter.setPen(cls_colors[token.classification])
+                    else:
                         painter.setPen(main_move_color if token.level == 0 else var_move_color)
+                            
                     painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
                     
                 elif token.token_type == "comment":
@@ -388,6 +410,7 @@ class QPainterPGNBrowser(QWidget):
         self.show_comments = True
         self.show_variations = True
         self.show_eval = True
+        self.show_classifications = True
         self.layout_mode = 1  # 1 = ChessBase Blocks
         self.font_family = "Segoe UI"
         self.base_font_size = 12
@@ -548,23 +571,36 @@ class QPainterPGNBrowser(QWidget):
                 eval_match = re.search(r'\[%eval\s+([^\]]+)\]', curr.comment)
                 if eval_match:
                     eval_text = format_compact_eval(eval_match.group(1))
+
+            # Extract classification
+            cls_val = None
+            if curr.comment:
+                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', curr.comment)
+                if alz_match:
+                    cls_tokens = alz_match.group(1).split()
+                    for token in cls_tokens:
+                        if token.startswith("cls="):
+                            try:
+                                cls_val = int(token.split("=")[1])
+                            except ValueError:
+                                pass
             
             if board.turn == chess.WHITE:
                 block = PaintBlock(level)
                 block.tokens.append(Token("num", f"{move_num}.", level=level))
-                block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
                 if eval_text:
                     block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 blocks.append(block)
             else:
                 if blocks and blocks[-1].tokens and blocks[-1].tokens[-1].token_type == "move" and blocks[-1].level == level and "..." not in blocks[-1].tokens[0].text:
-                    blocks[-1].tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                    blocks[-1].tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
                     if eval_text:
                         blocks[-1].tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 else:
                     block = PaintBlock(level)
                     block.tokens.append(Token("num", f"{move_num}...", level=level))
-                    block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
+                    block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
                     if eval_text:
                         block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                     blocks.append(block)
@@ -622,8 +658,21 @@ class QPainterPGNBrowser(QWidget):
                 if need_prefix:
                     current_block.tokens.append(Token("num", f"{move_num}...", level=level))
                     need_prefix = False
+
+            # Extract classification
+            cls_val = None
+            if curr.comment:
+                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', curr.comment)
+                if alz_match:
+                    cls_tokens = alz_match.group(1).split()
+                    for token in cls_tokens:
+                        if token.startswith("cls="):
+                            try:
+                                cls_val = int(token.split("=")[1])
+                            except ValueError:
+                                pass
                     
-            current_block.tokens.append(Token("move", san, move_idx=move_idx, level=level))
+            current_block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
             
             # Extract and add compact eval if present
             if self.show_eval and curr.comment:

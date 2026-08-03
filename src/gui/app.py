@@ -1,5 +1,6 @@
 import re
 import sys
+import qtawesome as qta
 
 import chess
 from PyQt5.QtCore import QUrl, Qt, QTimer, QEvent
@@ -19,6 +20,8 @@ from PyQt5.QtWidgets import (
     QDockWidget,
     QAction,
     QSizePolicy,
+    QPushButton,
+    QMenu,
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget
@@ -28,6 +31,7 @@ from core.engine import ChessEngine
 from core.move_manager import MoveManager
 from gui.widgets.painter_pgn_browser import QPainterPGNBrowser
 from gui.widgets.game_analytics import GameAnalytics
+from gui.widgets.analysis_summary_widget import AnalysisSummaryWidget
 from gui.dialogs.variations_dlg import VariationsDialog
 from utils.helpers import _create_action, _create_iconed_button
 from gui.dialogs.board_editor import BoardEditorDlg
@@ -172,7 +176,6 @@ class ChessApp(QMainWindow):
         self.jump_to_end_button = _create_iconed_button(
             "mdi.skip-next", "End", "Navigate to end"
         )
-        flip_button = _create_iconed_button("ei.refresh", "Ctrl+f", "Flip board")
 
         pgn_container = QWidget()
         pgn_dock_layout = QVBoxLayout(pgn_container)
@@ -180,31 +183,60 @@ class ChessApp(QMainWindow):
         pgn_dock_layout.setSpacing(4)
         pgn_dock_layout.addWidget(self.browser)
 
-        nav_widget = QWidget()
-        nav_widget_layout = QHBoxLayout(nav_widget)
-        nav_widget_layout.setContentsMargins(0, 0, 0, 0)
-        nav_widget_layout.setSpacing(2)
-        for btn in [
-            self.jump_to_start_button,
-            self.backward_button,
-            self.forward_button,
-            self.jump_to_end_button,
-            flip_button,
-        ]:
-            nav_widget_layout.addWidget(btn)
-        pgn_dock_layout.addWidget(nav_widget)
+        controls_widget = QWidget()
+        controls_layout = QHBoxLayout(controls_widget)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(2)
 
-        actions_widget = QWidget()
-        actions_widget_layout = QHBoxLayout(actions_widget)
-        actions_widget_layout.setContentsMargins(0, 0, 0, 0)
-        actions_widget_layout.setSpacing(2)
-        load_fen_btn = _create_iconed_button("fa6s.gear", "Ctrl+l", "Load FEN")
-        save_pgn_btn = _create_iconed_button("fa5s.save", "Ctrl+s", "Save Pgn")
-        copy_pgn_btn = _create_iconed_button("fa5s.copy", "Ctrl+c", "Copy Pgn")
-        clear_btn = _create_iconed_button("fa5s.trash", "Ctrl+d", "Clear Pgn")
-        for btn in [load_fen_btn, save_pgn_btn, copy_pgn_btn, clear_btn]:
-            actions_widget_layout.addWidget(btn)
-        pgn_dock_layout.addWidget(actions_widget)
+        # Add navigation buttons
+        controls_layout.addWidget(self.jump_to_start_button)
+        controls_layout.addWidget(self.backward_button)
+        controls_layout.addWidget(self.forward_button)
+        controls_layout.addWidget(self.jump_to_end_button)
+
+        self.options_menu_btn = _create_iconed_button(
+            "fa5s.bars", "", "Game Options", self.is_dark
+        )
+        
+        options_menu = QMenu(self.options_menu_btn)
+        options_menu.setStyleSheet("""
+            QMenu {
+                background-color: palette(window);
+                color: palette(text);
+                border: 1px solid palette(mid);
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 24px 6px 12px;
+                margin: 2px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: palette(highlight);
+                color: palette(highlighted-text);
+            }
+        """)
+
+        # Add actions to dropdown menu
+        flip_act = options_menu.addAction(qta.icon("ei.refresh"), "Flip Board")
+        flip_act.triggered.connect(self.flip_board)
+        
+        load_fen_act = options_menu.addAction(qta.icon("fa6s.gear"), "Load FEN...")
+        load_fen_act.triggered.connect(self.load_fen)
+        
+        save_pgn_act = options_menu.addAction(qta.icon("fa5s.save"), "Save PGN...")
+        save_pgn_act.triggered.connect(self.save_pgn)
+        
+        copy_pgn_act = options_menu.addAction(qta.icon("fa5s.copy"), "Copy PGN")
+        copy_pgn_act.triggered.connect(lambda _: self.copy_pgn_action())
+        
+        clear_pgn_act = options_menu.addAction(qta.icon("fa5s.trash"), "Clear PGN")
+        clear_pgn_act.triggered.connect(self.clear_pgn)
+
+        self.options_menu_btn.setMenu(options_menu)
+        controls_layout.addWidget(self.options_menu_btn)
+        pgn_dock_layout.addWidget(controls_widget)
 
         self.pgn_dock = QDockWidget("PGN Browser", self)
         self.pgn_dock.setWidget(pgn_container)
@@ -232,6 +264,14 @@ class ChessApp(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, self.analytics_dock)
         self.analytics_widget.moveIndexRequested.connect(self.move_manager.jump_to)
 
+        # 5. Game Review (Analysis Summary) Dock
+        self.summary_widget = AnalysisSummaryWidget(self)
+        self.summary_dock = QDockWidget("Game Review", self)
+        self.summary_dock.setWidget(self.summary_widget)
+        self.summary_dock.setObjectName("summary_dock")
+        self.addDockWidget(Qt.RightDockWidgetArea, self.summary_dock)
+        self.tabifyDockWidget(self.pgn_dock, self.summary_dock)
+
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
         self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
         QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
@@ -242,6 +282,7 @@ class ChessApp(QMainWindow):
         self.init_menubar()
         self.display_pgn()
         self.analytics_widget.update_data(self.move_manager.game, self.move_manager.current_node)
+        self.summary_widget.update_data(self.move_manager.game)
         self.apply_settings()
 
         # --- Signals ---
@@ -253,11 +294,6 @@ class ChessApp(QMainWindow):
         self.backward_button.clicked.connect(self.backward)
         self.jump_to_start_button.clicked.connect(self.jump_to_start)
         self.jump_to_end_button.clicked.connect(self.jump_to_end)
-        flip_button.clicked.connect(self.flip_board)
-        load_fen_btn.clicked.connect(self.load_fen)
-        save_pgn_btn.clicked.connect(self.save_pgn)
-        clear_btn.clicked.connect(self.clear_pgn)
-        copy_pgn_btn.clicked.connect(lambda _: self.copy_pgn_action())
 
         self.move_manager.pgnChanged.connect(lambda _: self.display_pgn())
         self.move_manager.activeNodeChanged.connect(self.sync_board_to_pgn)
@@ -476,6 +512,7 @@ class ChessApp(QMainWindow):
         docks_menu.addAction(self.analysis_dock.toggleViewAction())
         docks_menu.addAction(self.explorer_dock.toggleViewAction())
         docks_menu.addAction(self.analytics_dock.toggleViewAction())
+        docks_menu.addAction(self.summary_dock.toggleViewAction())
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
@@ -501,6 +538,14 @@ class ChessApp(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.autoplay_action)
 
+        # Quick Access Toolbar Actions
+        flip_action = _create_action(
+            self, "Flip Board", self.flip_board, "Ctrl+F", icon_name="ei.refresh"
+        )
+        clear_action = _create_action(
+            self, "Clear PGN", self.clear_pgn, "Ctrl+Shift+D", icon_name="fa5s.trash"
+        )
+
         self.init_toolbar(
             [
                 open_action,
@@ -510,6 +555,8 @@ class ChessApp(QMainWindow):
                 edit_headers_action,
                 export_img_action,
                 settings_action,
+                flip_action,
+                clear_action,
             ]
         )
 
@@ -593,7 +640,11 @@ class ChessApp(QMainWindow):
         self.move_manager.create_mapping()
         
         show_eval = settings.value("show_eval_annotations", True, type=bool)
+        show_cls = settings.value("show_move_classifications", True, type=bool)
         self.browser.show_eval = show_eval
+        self.browser.show_classifications = show_cls
+        self.move_manager.show_classifications = show_cls
+        self.move_manager.create_mapping()
         self.browser.rebuild_layout(force=True)
         self.display_pgn()
 
@@ -645,6 +696,7 @@ class ChessApp(QMainWindow):
             self.gametrain_widget.set_theme(True)
             self.opxl.set_theme(True)
             self.analytics_widget.set_theme(True)
+            self.summary_widget.set_theme(True)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, True)
@@ -655,6 +707,7 @@ class ChessApp(QMainWindow):
             self.gametrain_widget.set_theme(False)
             self.opxl.set_theme(False)
             self.analytics_widget.set_theme(False)
+            self.summary_widget.set_theme(False)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, False)
@@ -712,6 +765,8 @@ class ChessApp(QMainWindow):
         )
         if hasattr(self, "analytics_widget"):
             self.analytics_widget.update_data(self.move_manager.game, node)
+        if hasattr(self, "summary_widget"):
+            self.summary_widget.update_data(self.move_manager.game)
 
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())

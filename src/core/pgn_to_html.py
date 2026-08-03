@@ -71,6 +71,8 @@ class HtmlExporterMixin:
         variations: bool = True,
         highlight_index: Optional[int] = None,
         font_family: str = "sans-serif",
+        nodes: Optional[List[chess.pgn.GameNode]] = None,
+        show_classifications: bool = True,
     ):
         self.columns = columns
         self.headers = headers
@@ -78,7 +80,8 @@ class HtmlExporterMixin:
         self.variations = variations
         self.highlight_index = highlight_index
         self.font_family = font_family
-
+        self.nodes = nodes
+        self.show_classifications = show_classifications
 
         self.force_movenumber = True
         self.variation_depth = 0
@@ -157,9 +160,35 @@ class HtmlExporterMixin:
             is_highlighted = self.move_index == self.highlight_index
             highlight_class = " highlight" if is_highlighted else ""
             
+            import re
+            node_cls = None
+            if self.nodes and self.move_index < len(self.nodes):
+                node = self.nodes[self.move_index]
+                if node.comment:
+                    alz_match = re.search(r'\[%alz\s+([^\]]+)\]', node.comment)
+                    if alz_match:
+                        cls_tokens = alz_match.group(1).split()
+                        for token in cls_tokens:
+                            if token.startswith("cls="):
+                                try:
+                                    node_cls = int(token.split("=")[1])
+                                except ValueError:
+                                    pass
+
+            CLS_CLASS_MAP = {
+                4: "cls-inaccuracy",
+                5: "cls-mistake",
+                6: "cls-blunder",
+                7: "cls-brilliant",
+                8: "cls-miss",
+            }
+            cls_class = ""
+            if self.show_classifications and node_cls in CLS_CLASS_MAP:
+                cls_class = f" {CLS_CLASS_MAP[node_cls]}"
+
             move_html = (
                 f'<span class="move">'
-                f'{prefix}<a id="m{self.move_index}" href="move({self.move_index})" class="mv{highlight_class}">{san}</a>'
+                f'{prefix}<a id="m{self.move_index}" href="move({self.move_index})" class="mv{highlight_class}{cls_class}">{san}</a>'
                 f"</span>"
             )
             self.parts.append(move_html)
@@ -183,7 +212,12 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
             .num {{ color: #757575; font-weight: bold; margin-right: 2px; }}
             .mv {{ font-family: {self.font_family}; color: #1A1A1A; text-decoration: none; padding: 4px 2px; }}
             .mv:hover {{ background: #eef6ff; }}
-            .mv.highlight {{ background: #FFF59D; color: #000; }}
+            .mv.highlight {{ background: #dbeafe; }}
+            .mv.cls-inaccuracy {{ color: #b58900; }}
+            .mv.cls-mistake {{ color: #e65100; }}
+            .mv.cls-blunder {{ color: #b71c1c; font-weight: bold; }}
+            .mv.cls-brilliant {{ color: #28c2a4; font-weight: bold; }}
+            .mv.cls-miss {{ color: #d32f2f; }}
             .cmt {{ color: #388E3C; font-style: italic; margin-left: 4px; }}
             .variation {{ color: #9aa0a6; }}
             .hdr {{ color: #555; font-family: monospace; }}
@@ -197,7 +231,12 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
                 .num {{ color: #9E9E9E; font-weight: bold; margin-right: 2px; }}
                 .mv {{ font-family: {self.font_family}; color: #BB86FC; text-decoration: none; padding: 4px 2px; }}
                 .mv:hover {{ background: #2A2A2A; }}
-                .mv.highlight {{ background: #4DB6AC; color: #000; }}
+                .mv.highlight {{ background: #1a365d; }}
+                .mv.cls-inaccuracy {{ color: #ffd54f; }}
+                .mv.cls-mistake {{ color: #ffa726; }}
+                .mv.cls-blunder {{ color: #ff5252; font-weight: bold; }}
+                .mv.cls-brilliant {{ color: #28c2a4; font-weight: bold; }}
+                .mv.cls-miss {{ color: #ff8a80; }}
                 .cmt {{ color: #03DAC6; font-style: italic; margin-left: 4px; }}
                 .variation {{ color: #B0BEC5; font-style: italic; }}
                 .hdr {{ color: #8D99AE; font-family: monospace; }}
@@ -216,13 +255,13 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
         self.dark_mode = is_dark_style
 
 
-def pgn_to_html(game: chess.pgn.Game, highlight_node: Optional[chess.pgn.GameNode] = None, style: bool = False, font_family: str = "sans-serif"):
+def pgn_to_html(game: chess.pgn.Game, highlight_node: Optional[chess.pgn.GameNode] = None, style: bool = False, font_family: str = "sans-serif", show_classifications: bool = True):
     nodes = flatten_nodes_pgn_order(game)
     highlight_index = None
     if highlight_node is not None:
         highlight_index = getattr(highlight_node, "flat_index", None)
         
-    exporter = HtmlExporter(variations=True, comments=True, headers=False, highlight_index=highlight_index, font_family=font_family)
+    exporter = HtmlExporter(variations=True, comments=True, headers=False, highlight_index=highlight_index, font_family=font_family, nodes=nodes, show_classifications=show_classifications)
     exporter.set_style(style)
     data = game.accept(exporter)
     return data, nodes
