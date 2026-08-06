@@ -442,7 +442,7 @@ class ChessApp(QMainWindow):
                 
             board = self.chessboard._internal_board
             if move in board.legal_moves:
-                self.chessboard._on_move_made(move)
+                self.chessboard._on_move_made(move, is_user_input=False)
                 
                 reason = self.get_game_over_reason(board)
                 if reason:
