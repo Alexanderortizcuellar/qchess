@@ -181,15 +181,31 @@ class OpeningExplorer(QtWidgets.QWidget):
         self.scroll.setWidget(self.container)
         self.main_layout.addWidget(self.scroll)
 
+        self.status_lbl = QtWidgets.QLabel(self.container)
+        self.status_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        self.status_lbl.setStyleSheet("color: #8b8987; font-style: italic; font-size: 11px; padding: 12px;")
+        self.status_lbl.hide()
+        self.container_layout.insertWidget(0, self.status_lbl)
+
         self.set_theme(True)
 
         if positions:
             self.update_positions(positions)
 
+    def show_loading(self, message: str = "Indexing database positions..."):
+        while self.container_layout.count() > 2:
+            item = self.container_layout.takeAt(1)
+            if item.widget():
+                item.widget().deleteLater()
+        self.status_lbl.setText(message)
+        self.status_lbl.show()
+
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
         bg = "#262421" if is_dark else "#ffffff"
+        color = "#8b8987" if is_dark else "#555555"
         self.setStyleSheet(f"background-color: {bg};")
+        self.status_lbl.setStyleSheet(f"color: {color}; font-style: italic; font-size: 11px; padding: 12px;")
         self.header.set_theme(is_dark)
         for i in range(self.container_layout.count()):
             w = self.container_layout.itemAt(i).widget()
@@ -197,8 +213,9 @@ class OpeningExplorer(QtWidgets.QWidget):
                 w.set_theme(is_dark)
 
     def update_positions(self, positions):
-        while self.container_layout.count() > 1:
-            item = self.container_layout.takeAt(0)
+        self.status_lbl.hide()
+        while self.container_layout.count() > 2:
+            item = self.container_layout.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
 
@@ -213,6 +230,7 @@ import os
 class OpeningProcess(QtCore.QObject):
     dataReady = QtCore.pyqtSignal(list)
     errorOcurred = QtCore.pyqtSignal(str)
+    indexingStatusChanged = QtCore.pyqtSignal(bool, str)  # (is_indexing, status_message)
 
     STATE_IDLE = 0
     STATE_INDEXING = 1
@@ -278,7 +296,7 @@ class OpeningProcess(QtCore.QObject):
         if needs_index:
             self.pending_query = (fen, filters)
             if self.state == self.STATE_INDEXING:
-                # Already indexing, just update pending query
+                # Already indexing, just update pending query and return (do NOT query process)
                 return
             
             # Stop interactive process if running
@@ -287,7 +305,9 @@ class OpeningProcess(QtCore.QObject):
             # Start indexing process using a separate QProcess
             self.state = self.STATE_INDEXING
             self.current_db_path = db_path
-            self.errorOcurred.emit("Indexing database, please wait...")
+            msg = "Indexing database positions..."
+            self.errorOcurred.emit(msg)
+            self.indexingStatusChanged.emit(True, msg)
             
             self.indexer = QtCore.QProcess(self)
             self.indexer.setProgram(self.exe_path)
@@ -299,7 +319,10 @@ class OpeningProcess(QtCore.QObject):
             self.indexer.start()
             return
 
-        # No indexing needed. Check if we need to start or restart interactive mode.
+        # If currently indexing, do NOT attempt to query interactive process
+        if self.state == self.STATE_INDEXING:
+            self.pending_query = (fen, filters)
+            return
         if self.state != self.STATE_INTERACTIVE or self.current_db_path != db_path or self.process.state() != QtCore.QProcess.Running:
             self.pending_query = (fen, filters)
             
@@ -442,6 +465,7 @@ class OpeningProcess(QtCore.QObject):
         if exit_code == 0:
             self.errorOcurred.emit("Indexing complete. Starting explorer...")
             self.state = self.STATE_IDLE
+            self.indexingStatusChanged.emit(False, "")
             # Start interactive mode using start_query
             if self.pending_query:
                 fen, filters = self.pending_query
@@ -449,6 +473,7 @@ class OpeningProcess(QtCore.QObject):
                 self.start_query(fen, filters)
         else:
             self.state = self.STATE_IDLE
+            self.indexingStatusChanged.emit(False, "")
             self.errorOcurred.emit(f"Indexing failed with exit code {exit_code}")
             self.pending_query = None
 
@@ -562,6 +587,7 @@ class OpeningExplorerLogic(QtWidgets.QWidget):
         self.opening_process = OpeningProcess(self)
         self.opening_process.dataReady.connect(self.on_data_ready)
         self.opening_process.errorOcurred.connect(self.errorOcurred.emit)
+        self.opening_process.indexingStatusChanged.connect(self.on_indexing_status_changed)
 
         # Connect inputs to apply automatically where appropriate
         self.player_input.returnPressed.connect(self.apply_filters)
@@ -705,6 +731,10 @@ class OpeningExplorerLogic(QtWidgets.QWidget):
             self.explorer.update_positions(data[:12])
         else:
             self.explorer.update_positions([])
+
+    def on_indexing_status_changed(self, is_indexing: bool, message: str):
+        if is_indexing:
+            self.explorer.show_loading(message)
 
     def send_fen(self, fen):
         self.last_fen = fen
