@@ -250,9 +250,13 @@ class OpeningProcess(QtCore.QObject):
             self.errorOcurred.emit("No PGN path configured in settings")
             return
             
-        # 2. Determine DB path
+        # 2. Determine DB path (must include 'positions' in filename)
         if pgn_path.lower().endswith(".pgn"):
-            db_path = pgn_path + ".db"
+            db_path = pgn_path + ".positions.db"
+        elif pgn_path.lower().endswith(".db") and "positions" not in pgn_path.lower():
+            # If a custom .db path is supplied without 'positions' in name
+            base, ext = os.path.splitext(pgn_path)
+            db_path = f"{base}_positions{ext}"
         else:
             db_path = pgn_path
 
