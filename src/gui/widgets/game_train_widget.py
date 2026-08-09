@@ -1,6 +1,4 @@
-import sys
-import chess
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
     QPushButton, QSpinBox, QGroupBox, QFormLayout

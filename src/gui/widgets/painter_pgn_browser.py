@@ -1,5 +1,5 @@
 import re
-from PyQt5.QtCore import Qt, QRect, QSize, pyqtSignal, QUrl
+from PyQt5.QtCore import Qt, QRect, pyqtSignal, QUrl
 from PyQt5.QtGui import QColor, QFont, QPainter, QFontMetrics
 from PyQt5.QtWidgets import QScrollArea, QWidget, QMenu, QAction, QVBoxLayout
 import chess.pgn
@@ -373,15 +373,18 @@ class QPainterHeaderWidget(QWidget):
             title_y = 10 + card_padding + fm_title.ascent()
             title_x = card_margin + card_padding
             
+            # Draw White (left-aligned)
             painter.setFont(header_title_font)
             painter.setPen(text_color)
             painter.drawText(title_x, title_y, white_elided)
             title_x += fm_title.width(white_elided)
             
+            # Draw VS centered (or after White)
             painter.setPen(header_vs)
             painter.drawText(title_x, title_y, " vs ")
             title_x += vs_w
             
+            # Draw Black right of VS
             painter.setPen(text_color)
             painter.drawText(title_x, title_y, black_elided)
             
@@ -454,7 +457,7 @@ class QPainterPGNBrowser(QWidget):
     def rebuild_layout(self, force=False):
         self.is_dark = self.move_manager.html_style
         
-        # Check if PGN nodes structure has changed to determine if we should rebuild the layout cache
+        # Check if PGN nodes or headers have changed to determine if we should rebuild the layout cache
         current_nodes = getattr(self.move_manager, 'nodes', [])
         nodes_changed = True
         if hasattr(self, 'cached_nodes') and len(self.cached_nodes) == len(current_nodes):
@@ -464,14 +467,21 @@ class QPainterPGNBrowser(QWidget):
                     nodes_changed = True
                     break
                     
+        # Check if headers changed
+        headers_changed = True
+        current_headers = dict(self.move_manager.game.headers) if hasattr(self.move_manager, 'game') and self.move_manager.game else {}
+        if hasattr(self, 'cached_headers') and self.cached_headers == current_headers:
+            headers_changed = False
+
         layout_width = self.paint_widget.width() - 30
         if layout_width <= 0:
             layout_width = 300
             
         width_changed = (not hasattr(self, 'last_layout_width') or self.last_layout_width != layout_width)
         
-        if force or nodes_changed or width_changed or getattr(self, 'layout_invalid', False):
+        if force or nodes_changed or headers_changed or width_changed or getattr(self, 'layout_invalid', False):
             self.cached_nodes = list(current_nodes)
+            self.cached_headers = current_headers
             self.last_layout_width = layout_width
             self.layout_invalid = False
             
@@ -493,6 +503,8 @@ class QPainterPGNBrowser(QWidget):
                 self.header_widget.setFixedHeight(0)
                 
             self.header_widget.update()
+            self.header_widget.updateGeometry()
+            self.main_layout.activate()
             
             self.flat_nodes = []
             self.blocks = []

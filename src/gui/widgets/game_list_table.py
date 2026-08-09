@@ -461,6 +461,9 @@ class GameListTableWidget(QtWidgets.QWidget):
 
         payload = {h: row_data.get(h, "") for h in GameListTableModel.HEADERS}
         payload["PGN"] = pgn_text
+        payload["_pgn_path"] = pgn_path
+        payload["_offset"] = offset
+        payload["_length"] = length
         self.gameSelected.emit(payload)
 
     def save_header_state(self):

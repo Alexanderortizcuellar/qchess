@@ -2,18 +2,16 @@ import os
 import qtawesome as qta
 
 from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize
-from PyQt5.QtGui import QPixmap, QFont, QIcon
+from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QFileDialog,
     QStackedWidget,
     QStatusBar,
-    QSizePolicy,
     QProgressBar,
     QAction,
     QToolBar,

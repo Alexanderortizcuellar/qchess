@@ -1,6 +1,6 @@
 import sys
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (QApplication, QCheckBox, QHBoxLayout, QLabel,
                              QTextBrowser, QVBoxLayout, QWidget, QFrame, QPushButton)
 

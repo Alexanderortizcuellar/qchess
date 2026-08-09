@@ -1,6 +1,5 @@
 # game_analytics.py
 import re
-import math
 import chess
 import chess.pgn
 from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal

@@ -3,7 +3,7 @@ import sys
 import qtawesome as qta
 
 import chess
-from PyQt5.QtCore import QUrl, Qt, QTimer, QEvent
+from PyQt5.QtCore import QUrl, Qt, QTimer, QEvent, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -20,7 +20,6 @@ from PyQt5.QtWidgets import (
     QDockWidget,
     QAction,
     QSizePolicy,
-    QPushButton,
     QMenu,
 )
 
@@ -40,9 +39,12 @@ from gui.dialogs.pgn_import_dlg import PGNImportDlg
 from gui.dialogs.settings_dlg import SettingsDialog
 from gui.dialogs.pgn_headers_dlg import PGNHeadersDialog
 from core.opening_explorer import OpeningExplorerLogic
+from core.pgn_editor import save_game_to_pgn
 
 
 class ChessApp(QMainWindow):
+    gameSaved = pyqtSignal(str, object, object)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Chess App")
@@ -68,6 +70,9 @@ class ChessApp(QMainWindow):
         self.current_figurine_font = self.figurine_font_family
 
         self.move_manager = MoveManager()
+        self.current_pgn_path = None
+        self.current_pgn_offset = None
+        self.current_pgn_length = None
         self.engine = ChessEngine("stockfish", self)
 
         # Game Autoplay timer
@@ -466,6 +471,9 @@ class ChessApp(QMainWindow):
         save_action = _create_action(
             self, "Save", self.save_pgn, "Ctrl+S", icon_name="fa5s.save"
         )
+        save_as_action = _create_action(
+            self, "Save As...", self.save_pgn_as, "Ctrl+Shift+S", icon_name="fa5s.save"
+        )
         copy_action = _create_action(
             self, "Copy PGN", self.copy_pgn_action, "Ctrl+C", icon_name="fa5s.copy"
         )
@@ -497,7 +505,7 @@ class ChessApp(QMainWindow):
             self, "Reset Board", self.clear_pgn, "Ctrl+R", icon_name="fa5s.redo-alt"
         )
         setup_board_action = _create_action(
-            self, "Set Up Board...", self.setup_board, "Ctrl+Shift+S", icon_name="fa5s.chess-board"
+            self, "Set Up Board...", self.setup_board, "Ctrl+Shift+T", icon_name="fa5s.chess-board"
         )
         copy_board_img_action = _create_action(
             self, "Copy Board Image", self.copy_board_image, "Ctrl+Shift+C", icon_name="fa5s.copy"
@@ -547,6 +555,7 @@ class ChessApp(QMainWindow):
 
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
+        file_menu.addAction(save_as_action)
         file_menu.addAction(copy_action)
         file_menu.addAction(paste_pgn_action)
         file_menu.addAction(edit_headers_action)
@@ -1019,6 +1028,9 @@ class ChessApp(QMainWindow):
         )
         if ok:
             self.move_manager.load_pgn_file(file)
+            self.current_pgn_path = file
+            self.current_pgn_offset = None
+            self.current_pgn_length = None
 
     def edit_pgn_headers(self, title="Edit PGN Headers") -> bool:
         dlg = PGNHeadersDialog(self, self.move_manager.game.headers, title=title)
@@ -1029,6 +1041,14 @@ class ChessApp(QMainWindow):
                 self.move_manager.game.headers[k] = v
             self.move_manager.create_mapping()
             self.move_manager.is_dirty = True
+            self.browser.rebuild_layout(force=True)
+            self.display_pgn()
+            
+            # Immediately update the window title
+            white = self.move_manager.game.headers.get("White", "?")
+            black = self.move_manager.game.headers.get("Black", "?")
+            self.setWindowTitle(f"Chess App — {white} vs {black}")
+            
             return True
         return False
 
@@ -1041,15 +1061,38 @@ class ChessApp(QMainWindow):
             self.statusBar().showMessage("PGN copied to clipboard.")
 
     def save_pgn(self):
+        # Save to currently opened file, or fall back to Save As if none is open
+        if self.current_pgn_path:
+            if self.edit_pgn_headers(title="Edit PGN Headers before Saving"):
+                try:
+                    save_game_to_pgn(
+                        self.move_manager.game,
+                        self.current_pgn_path,
+                        offset=self.current_pgn_offset,
+                        length=self.current_pgn_length
+                    )
+                    self.statusBar().showMessage(f"PGN saved to {self.current_pgn_path}")
+                    self.move_manager.is_dirty = False
+                    self.gameSaved.emit(self.current_pgn_path, self.current_pgn_offset, self.current_pgn_length)
+                except Exception as e:
+                    QMessageBox.critical(self, "Save Error", f"Could not save PGN: {str(e)}")
+        else:
+            self.save_pgn_as()
+
+    def save_pgn_as(self):
         if self.edit_pgn_headers(title="Edit PGN Headers before Saving"):
             file, ok = QFileDialog.getSaveFileName(
-                self, "Save", ".", "Pgn Files (*.pgn);;All (*)"
+                self, "Save As", ".", "Pgn Files (*.pgn);;All (*)"
             )
             if ok:
-                with open(file, "w", encoding="utf-8") as f:
-                    f.write(self.move_manager.get_pgn())
-                self.statusBar().showMessage(f"PGN saved to {file}")
-                self.move_manager.is_dirty = False
+                try:
+                    save_game_to_pgn(self.move_manager.game, file)
+                    self.current_pgn_path = file
+                    self.statusBar().showMessage(f"PGN saved to {file}")
+                    self.move_manager.is_dirty = False
+                    self.gameSaved.emit(self.current_pgn_path, self.current_pgn_offset, self.current_pgn_length)
+                except Exception as e:
+                    QMessageBox.critical(self, "Save Error", f"Could not save PGN: {str(e)}")
 
     def export_board_image(self):
         file, ok = QFileDialog.getSaveFileName(

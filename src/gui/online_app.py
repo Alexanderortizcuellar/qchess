@@ -3,15 +3,24 @@ import sys
 import chess
 from PyQt5.QtCore import Qt, QTimer, QUrl, QDateTime
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QPushButton, QStackedWidget, QListWidget, 
-    QListWidgetItem, QMessageBox, QSplitter, QTabWidget,
-    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QSpinBox
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QStackedWidget,
+    QMessageBox,
+    QTableWidgetItem,
+    QComboBox,
+    QSpinBox,
 )
 from core.network_client import ChessClient
 from gui.widgets.chessboard import ChessBoard
 from gui.widgets.painter_pgn_browser import QPainterPGNBrowser
 from core.move_manager import MoveManager
+
 
 class OnlineChessApp(QMainWindow):
     def __init__(self):
@@ -22,10 +31,10 @@ class OnlineChessApp(QMainWindow):
         self.client = ChessClient(self)
         self.move_manager = MoveManager()
         self.current_game_id = None
-        self.my_color = None # 'white' or 'black' or None (spectator)
-        self.my_game_roles = {} # Track game_id -> color
+        self.my_color = None  # 'white' or 'black' or None (spectator)
+        self.my_game_roles = {}  # Track game_id -> color
         self.opponent_joined = False
-        
+
         self.white_time_ms = 0
         self.black_time_ms = 0
         self.side_to_move = None
@@ -34,7 +43,7 @@ class OnlineChessApp(QMainWindow):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.on_timer_tick)
-        self.timer.start(100) # Update every 100ms
+        self.timer.start(100)  # Update every 100ms
 
         self.init_ui()
         self.setup_signals()
@@ -49,14 +58,14 @@ class OnlineChessApp(QMainWindow):
         conn_layout = QVBoxLayout(self.conn_widget)
         conn_layout.setContentsMargins(50, 50, 50, 50)
         conn_layout.addStretch()
-        
+
         title = QLabel("Connect to QChess Server")
         title.setStyleSheet("font-size: 32px; font-weight: bold; margin-bottom: 20px;")
         conn_layout.addWidget(title, alignment=Qt.AlignCenter)
-        
+
         form_widget = QWidget()
         form_layout = QVBoxLayout(form_widget)
-        
+
         self.url_input = QLineEdit("ws://localhost:8080/ws")
         self.url_input.setPlaceholderText("Server WebSocket URL")
         self.url_input.setFixedWidth(400)
@@ -74,7 +83,7 @@ class OnlineChessApp(QMainWindow):
         """)
         self.connect_btn.clicked.connect(self.on_connect_clicked)
         form_layout.addWidget(self.connect_btn, alignment=Qt.AlignCenter)
-        
+
         conn_layout.addWidget(form_widget, alignment=Qt.AlignCenter)
         conn_layout.addStretch()
         self.stacked_widget.addWidget(self.conn_widget)
@@ -83,13 +92,13 @@ class OnlineChessApp(QMainWindow):
         self.lobby_widget = QWidget()
         lobby_layout = QVBoxLayout(self.lobby_widget)
         lobby_layout.setContentsMargins(20, 20, 20, 20)
-        
+
         lobby_header = QHBoxLayout()
         header_text = QLabel("Game Lobby")
         header_text.setStyleSheet("font-size: 28px; font-weight: bold;")
         lobby_header.addWidget(header_text)
         lobby_header.addStretch()
-        
+
         self.refresh_btn = QPushButton("Refresh List")
         self.refresh_btn.clicked.connect(self.client.list_games)
         lobby_header.addWidget(self.refresh_btn)
@@ -115,11 +124,11 @@ class OnlineChessApp(QMainWindow):
         """)
         create_layout = QHBoxLayout(create_box)
         create_layout.setSpacing(15)
-        
+
         lbl = QLabel("Create Game:")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
         create_layout.addWidget(lbl)
-        
+
         # Game Type
         create_layout.addWidget(QLabel("Type:"))
         self.game_type_combo = QComboBox()
@@ -148,7 +157,7 @@ class OnlineChessApp(QMainWindow):
         self.base_time_spin.setRange(1, 180)
         self.base_time_spin.setValue(10)
         create_layout.addWidget(self.base_time_spin)
-        
+
         # Increment (Initially Hidden)
         self.inc_time_lbl = QLabel("Inc (sec):")
         self.inc_time_lbl.hide()
@@ -172,25 +181,32 @@ class OnlineChessApp(QMainWindow):
         """)
         self.create_custom_btn.clicked.connect(self.on_create_custom_clicked)
         create_layout.addWidget(self.create_custom_btn)
-        
+
         create_layout.addStretch()
         lobby_layout.addWidget(create_box)
 
         # Tabs for Challenges vs Ongoing
-        from PyQt5.QtWidgets import QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView
+        from PyQt5.QtWidgets import QTabWidget, QTableWidget, QHeaderView
+
         self.tabs = QTabWidget()
-        
+
         # Challenges Tab
         self.challenges_table = QTableWidget(0, 3)
-        self.challenges_table.setHorizontalHeaderLabels(["Game ID", "Time Control", "Action"])
-        self.challenges_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.challenges_table.setHorizontalHeaderLabels(
+            ["Game ID", "Time Control", "Action"]
+        )
+        self.challenges_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
         self.challenges_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.challenges_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.challenges_table.cellDoubleClicked.connect(self.on_challenge_cell_clicked)
-        
+
         # Ongoing Tab
         self.ongoing_table = QTableWidget(0, 4)
-        self.ongoing_table.setHorizontalHeaderLabels(["Game ID", "White", "Black", "Time"])
+        self.ongoing_table.setHorizontalHeaderLabels(
+            ["Game ID", "White", "Black", "Time"]
+        )
         self.ongoing_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.ongoing_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.ongoing_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -222,51 +238,57 @@ class OnlineChessApp(QMainWindow):
 
         self.tabs.addTab(self.challenges_table, "Available Challenges")
         self.tabs.addTab(self.ongoing_table, "Active Games")
-        
+
         lobby_layout.addWidget(self.tabs)
         self.stacked_widget.addWidget(self.lobby_widget)
 
         # 3. Game Screen
         self.game_widget = QWidget()
         game_layout = QHBoxLayout(self.game_widget)
-        
+
         # Left side: Board and Clocks
         board_area = QWidget()
         board_area_layout = QVBoxLayout(board_area)
-        
+
         self.opponent_info = QLabel("Opponent: -")
         self.opponent_clock = QLabel("00:00")
-        self.opponent_clock.setStyleSheet("font-size: 20px; font-weight: bold; font-family: monospace;")
-        
+        self.opponent_clock.setStyleSheet(
+            "font-size: 20px; font-weight: bold; font-family: monospace;"
+        )
+
         self.chessboard = ChessBoard(self, chess.Board().fen(), size=600)
-        
+
         self.my_info = QLabel("You: -")
         self.my_clock = QLabel("00:00")
-        self.my_clock.setStyleSheet("font-size: 20px; font-weight: bold; font-family: monospace;")
-        
+        self.my_clock.setStyleSheet(
+            "font-size: 20px; font-weight: bold; font-family: monospace;"
+        )
+
         board_area_layout.addWidget(self.opponent_info)
         board_area_layout.addWidget(self.opponent_clock)
         board_area_layout.addWidget(self.chessboard, alignment=Qt.AlignCenter)
         board_area_layout.addWidget(self.my_clock)
         board_area_layout.addWidget(self.my_info)
-        
+
         # Right side: History and Status
         info_area = QWidget()
         info_layout = QVBoxLayout(info_area)
-        
+
         self.game_status_label = QLabel("Status: Waiting...")
         self.game_status_label.setStyleSheet("font-weight: bold;")
         info_layout.addWidget(self.game_status_label)
-        
+
         self.waiting_indicator = QLabel("Waiting for opponent to join...")
-        self.waiting_indicator.setStyleSheet("color: #e67e22; font-weight: bold; font-size: 16px;")
+        self.waiting_indicator.setStyleSheet(
+            "color: #e67e22; font-weight: bold; font-size: 16px;"
+        )
         self.waiting_indicator.setAlignment(Qt.AlignCenter)
         self.waiting_indicator.hide()
         info_layout.addWidget(self.waiting_indicator)
-        
+
         self.pgn_browser = QPainterPGNBrowser(self, self.move_manager)
         info_layout.addWidget(self.pgn_browser)
-        
+
         self.resign_btn = QPushButton("Resign")
         self.resign_btn.clicked.connect(self.on_resign_clicked)
         info_layout.addWidget(self.resign_btn)
@@ -281,7 +303,7 @@ class OnlineChessApp(QMainWindow):
 
         game_layout.addWidget(board_area, stretch=3)
         game_layout.addWidget(info_area, stretch=1)
-        
+
         self.stacked_widget.addWidget(self.game_widget)
 
     def setup_signals(self):
@@ -301,7 +323,9 @@ class OnlineChessApp(QMainWindow):
             fen = self.move_manager.current_node.board().fen()
             self.chessboard.update_board(fen, self.move_manager.current_node.move)
             # Disable board if not at the latest move
-            self.chessboard.interactive = self.move_manager.current_node.is_end() and (self.my_color == self.move_manager.get_board().turn)
+            self.chessboard.interactive = self.move_manager.current_node.is_end() and (
+                self.my_color == self.move_manager.get_board().turn
+            )
 
     def on_connect_clicked(self):
         url = self.url_input.text()
@@ -342,10 +366,11 @@ class OnlineChessApp(QMainWindow):
                         break
 
         def format_clock(config):
-            if not config: return "-"
-            time_m = config.get('time_ms', 0) // 60000
-            inc_s = config.get('increment_ms', 0) // 1000
-            if config.get('type') == 'increment':
+            if not config:
+                return "-"
+            time_m = config.get("time_ms", 0) // 60000
+            inc_s = config.get("increment_ms", 0) // 1000
+            if config.get("type") == "increment":
                 return f"{time_m}m + {inc_s}s"
             return f"{time_m} min"
 
@@ -353,23 +378,27 @@ class OnlineChessApp(QMainWindow):
         challenges = data.get("challenges", [])
         self.challenges_table.setRowCount(len(challenges))
         for i, game in enumerate(challenges):
-            self.challenges_table.setItem(i, 0, QTableWidgetItem(game['game_id']))
-            self.challenges_table.setItem(i, 1, QTableWidgetItem(format_clock(game.get('clock_config'))))
+            self.challenges_table.setItem(i, 0, QTableWidgetItem(game["game_id"]))
+            self.challenges_table.setItem(
+                i, 1, QTableWidgetItem(format_clock(game.get("clock_config")))
+            )
             self.challenges_table.setItem(i, 2, QTableWidgetItem("Click to Join"))
-            
+
         # Update Ongoing Table
         ongoing = data.get("ongoing", [])
         self.ongoing_table.setRowCount(len(ongoing))
         for i, game in enumerate(ongoing):
-            self.ongoing_table.setItem(i, 0, QTableWidgetItem(game['game_id']))
-            self.ongoing_table.setItem(i, 1, QTableWidgetItem(game['white'] or "-"))
-            self.ongoing_table.setItem(i, 2, QTableWidgetItem(game['black'] or "-"))
-            self.ongoing_table.setItem(i, 3, QTableWidgetItem(format_clock(game.get('clock_config'))))
+            self.ongoing_table.setItem(i, 0, QTableWidgetItem(game["game_id"]))
+            self.ongoing_table.setItem(i, 1, QTableWidgetItem(game["white"] or "-"))
+            self.ongoing_table.setItem(i, 2, QTableWidgetItem(game["black"] or "-"))
+            self.ongoing_table.setItem(
+                i, 3, QTableWidgetItem(format_clock(game.get("clock_config")))
+            )
 
     def on_challenge_cell_clicked(self, row, column):
         game_id = self.challenges_table.item(row, 0).text()
-        self.my_color = 'black'
-        self.my_game_roles[game_id] = 'black'
+        self.my_color = "black"
+        self.my_game_roles[game_id] = "black"
         self.client.join_game(game_id)
 
     def on_ongoing_cell_clicked(self, row, column):
@@ -379,7 +408,7 @@ class OnlineChessApp(QMainWindow):
             self.my_color = self.my_game_roles[game_id]
         else:
             # Joining an ongoing game as a spectator
-            self.my_color = None 
+            self.my_color = None
         self.client.join_game(game_id)
 
     def on_game_selected(self, item):
@@ -387,28 +416,34 @@ class OnlineChessApp(QMainWindow):
         pass
 
     def on_game_type_changed(self, index):
-        is_increment = (self.game_type_combo.currentText() == "Increment")
+        is_increment = self.game_type_combo.currentText() == "Increment"
         self.inc_time_lbl.setVisible(is_increment)
         self.inc_time_spin.setVisible(is_increment)
 
     def on_create_custom_clicked(self):
         base_ms = self.base_time_spin.value() * 60000
         inc_ms = self.inc_time_spin.value() * 1000
-        game_type = "increment" if self.game_type_combo.currentText() == "Increment" else "sudden_death"
-        self.my_color = 'white'
+        game_type = (
+            "increment"
+            if self.game_type_combo.currentText() == "Increment"
+            else "sudden_death"
+        )
+        self.my_color = "white"
         # Role will be stored in on_state_received once we have the game_id
         self.client.create_game(base_ms, inc_ms, game_type)
 
-    def on_create_game_clicked(self, time_ms=600000, increment_ms=0, game_type="sudden_death"):
-        self.my_color = 'white'
+    def on_create_game_clicked(
+        self, time_ms=600000, increment_ms=0, game_type="sudden_death"
+    ):
+        self.my_color = "white"
         self.client.create_game(time_ms, increment_ms, game_type)
 
     def on_state_received(self, state):
         if not state:
             return
-        
+
         self.current_game_id = state.get("game_id")
-        
+
         # Persist role if we just created/joined or if we are rejoining
         if self.current_game_id and self.my_color:
             self.my_game_roles[self.current_game_id] = self.my_color
@@ -416,62 +451,68 @@ class OnlineChessApp(QMainWindow):
             self.my_color = self.my_game_roles[self.current_game_id]
 
         self.stacked_widget.setCurrentWidget(self.game_widget)
-        
+
         fen = state.get("fen")
         self.side_to_move = state.get("side_to_move")
         new_status = state.get("status", "ongoing")
-        
+
         # Set user color for premoves support
-        if self.my_color == 'white':
+        if self.my_color == "white":
             self.chessboard.user_color = chess.WHITE
-        elif self.my_color == 'black':
+        elif self.my_color == "black":
             self.chessboard.user_color = chess.BLACK
         else:
             self.chessboard.user_color = None
-        
+
         self.chessboard.set_premoves_enabled(True)
 
         # If it's my first time in this game and I'm black, flip the board
-        if self.my_color == 'black' and self.chessboard.side == chess.WHITE:
+        if self.my_color == "black" and self.chessboard.side == chess.WHITE:
             self.chessboard.flip()
-        elif self.my_color == 'white' and self.chessboard.side == chess.BLACK:
+        elif self.my_color == "white" and self.chessboard.side == chess.BLACK:
             self.chessboard.flip()
 
         self.chessboard.update_board(fen)
-        
+
         # Sync time with server
         self.white_time_ms = state.get("white_time_ms", 0)
         self.black_time_ms = state.get("black_time_ms", 0)
         self.last_update_ms = QDateTime.currentMSecsSinceEpoch()
-        
+
         # Determine move history
         history = state.get("move_history", [])
-        
-        if len(history) > 0 or self.my_color == 'black':
+
+        if len(history) > 0 or self.my_color == "black":
             self.opponent_joined = True
-            
-        if self.my_color == 'white' and len(history) == 0 and not self.opponent_joined:
+
+        if self.my_color == "white" and len(history) == 0 and not self.opponent_joined:
             # We don't know if Black is here from the state payload alone.
             # Ask the server for the game list to verify.
             self.client.list_games()
-            
+
         # Check if game status changed to terminal
         is_terminal = new_status != "ongoing" and new_status != "check"
         old_terminal = self.game_status != "ongoing" and self.game_status != "check"
-        
+
         self.game_status = new_status
         self.update_game_active_state()
-        
+
         # If game just ended, show dialog
         if is_terminal and not old_terminal:
             self.show_game_end_dialog(self.game_status)
-        
+
         # Update buttons
-        self.resign_btn.setEnabled(self.game_status == "ongoing" or self.game_status == "check")
-        self.abort_btn.setVisible(self.game_status == "ongoing" and len(history) == 0 and self.my_color is not None)
+        self.resign_btn.setEnabled(
+            self.game_status == "ongoing" or self.game_status == "check"
+        )
+        self.abort_btn.setVisible(
+            self.game_status == "ongoing"
+            and len(history) == 0
+            and self.my_color is not None
+        )
 
         self.refresh_clocks_display()
-        
+
         if self.game_status == "aborted":
             status_text = "Status: ABORTED"
         elif isinstance(self.game_status, dict):
@@ -485,18 +526,18 @@ class OnlineChessApp(QMainWindow):
             else:
                 status_text = f"Status: {key.upper()}"
         else:
-            is_my_turn = (self.my_color == self.side_to_move)
+            is_my_turn = self.my_color == self.side_to_move
             status_text = f"Status: {self.game_status.upper()} | Turn: {self.side_to_move.upper()} {'(YOUR TURN)' if is_my_turn else ''}"
-        
+
         self.game_status_label.setText(status_text)
-        
+
         # Update move history
         self.rebuild_history(history)
 
     def show_game_end_dialog(self, status):
         title = "Game Over"
         message = ""
-        
+
         if status == "aborted":
             message = "The game was aborted."
         elif isinstance(status, dict):
@@ -516,17 +557,17 @@ class OnlineChessApp(QMainWindow):
                 message = f"Game ended: {status}"
         else:
             message = f"Game status: {status}"
-            
+
         QMessageBox.information(self, title, message)
 
     def update_game_active_state(self):
         if not self.current_game_id:
             return
-            
+
         # Game is active if ongoing/check and opponent joined (or I'm Black)
-        is_ongoing = (self.game_status == "ongoing" or self.game_status == "check")
-        is_waiting = (self.my_color == 'white' and not self.opponent_joined)
-        
+        is_ongoing = self.game_status == "ongoing" or self.game_status == "check"
+        is_waiting = self.my_color == "white" and not self.opponent_joined
+
         if is_waiting:
             self.waiting_indicator.show()
             self.is_game_active = False
@@ -537,27 +578,31 @@ class OnlineChessApp(QMainWindow):
         if not is_ongoing:
             self.chessboard.interactive = False
         else:
-            is_my_turn = (self.my_color == self.side_to_move)
+            is_my_turn = self.my_color == self.side_to_move
             self.chessboard.interactive = is_my_turn and self.is_game_active
 
     def on_timer_tick(self):
-        if not self.current_game_id or self.game_status != "ongoing" or not getattr(self, 'is_game_active', True):
+        if (
+            not self.current_game_id
+            or self.game_status != "ongoing"
+            or not getattr(self, "is_game_active", True)
+        ):
             return
         self.refresh_clocks_display()
 
     def refresh_clocks_display(self):
         now = QDateTime.currentMSecsSinceEpoch()
         elapsed = now - self.last_update_ms if self.last_update_ms > 0 else 0
-        
+
         w_display = self.white_time_ms
         b_display = self.black_time_ms
-        
-        if self.game_status == "ongoing" and getattr(self, 'is_game_active', True):
+
+        if self.game_status == "ongoing" and getattr(self, "is_game_active", True):
             if self.side_to_move == "white":
                 w_display = max(0, self.white_time_ms - elapsed)
             elif self.side_to_move == "black":
                 b_display = max(0, self.black_time_ms - elapsed)
-        
+
         def format_time(ms):
             s = int(ms // 1000)
             m = s // 60
@@ -568,18 +613,18 @@ class OnlineChessApp(QMainWindow):
         if self.my_color == "black":
             self.my_clock.setText(f"You (Black): {format_time(b_display)}")
             self.opponent_clock.setText(f"Opponent (White): {format_time(w_display)}")
-            self.my_info.setText(f"You: Black")
-            self.opponent_info.setText(f"Opponent: White")
+            self.my_info.setText("You: Black")
+            self.opponent_info.setText("Opponent: White")
         elif self.my_color == "white":
             self.my_clock.setText(f"You (White): {format_time(w_display)}")
             self.opponent_clock.setText(f"Opponent (Black): {format_time(b_display)}")
-            self.my_info.setText(f"You: White")
-            self.opponent_info.setText(f"Opponent: Black")
+            self.my_info.setText("You: White")
+            self.opponent_info.setText("Opponent: Black")
         else:
             self.my_clock.setText(f"White: {format_time(w_display)}")
             self.opponent_clock.setText(f"Black: {format_time(b_display)}")
-            self.my_info.setText(f"Spectating")
-            self.opponent_info.setText(f"")
+            self.my_info.setText("Spectating")
+            self.opponent_info.setText("")
 
     def rebuild_history(self, history):
         # MoveManager usually tracks its own game. We can manually reset it.
@@ -606,8 +651,10 @@ class OnlineChessApp(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.lobby_widget)
         self.client.list_games()
 
+
 if __name__ == "__main__":
     from PyQt5.QtWidgets import QApplication
+
     app = QApplication(sys.argv)
     window = OnlineChessApp()
     window.show()
