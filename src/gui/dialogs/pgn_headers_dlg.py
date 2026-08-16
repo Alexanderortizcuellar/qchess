@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QTableWidgetItem, QPushButton, QHeaderView, QDialogButtonBox, QLabel,
     QDateEdit, QComboBox, QMenu
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import QDate
 import qtawesome as qta
 
 

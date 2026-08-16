@@ -132,8 +132,9 @@ class EvalBar(QWidget):
             return
             
         font_size = max(6, int(total_h * 0.035))
-        if font_size > 11: font_size = 11
-        
+        if font_size > 11:
+            font_size = 11
+
         from PyQt5.QtGui import QFontMetrics
         max_allowed_w = max(10, r.width() - 4)
         while font_size > 5:

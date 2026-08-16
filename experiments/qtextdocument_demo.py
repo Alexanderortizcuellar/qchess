@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sr
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from PyQt5.QtCore import Qt, QTime
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor, QTextDocument, QTextBlockFormat
 from PyQt5.QtWidgets import (
     QApplication,

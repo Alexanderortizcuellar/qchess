@@ -177,7 +177,7 @@ class AnalysisWidget(QWidget):
                             is_first = False
                         else:
                             formatted_moves.append(move_uci)
-                    except:
+                    except Exception:
                         formatted_moves.append(move_uci)
                 moves_text = " ".join(formatted_moves)
             else:

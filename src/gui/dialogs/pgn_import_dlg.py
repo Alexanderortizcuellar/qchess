@@ -4,12 +4,10 @@ from PyQt5.QtWidgets import (
     QTextEdit,
     QDialogButtonBox,
     QLabel,
-    QApplication,
     QGroupBox,
     QGridLayout,
-    QCheckBox
+    QCheckBox,
 )
-from PyQt5.QtCore import Qt
 
 
 class PGNImportDlg(QDialog):

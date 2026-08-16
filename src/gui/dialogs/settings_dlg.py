@@ -1,6 +1,5 @@
-import chess
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
+    QDialog, QVBoxLayout, QHBoxLayout, QComboBox, 
     QCheckBox, QSpinBox, QPushButton, QGroupBox, QFormLayout,
     QLineEdit, QFileDialog
 )

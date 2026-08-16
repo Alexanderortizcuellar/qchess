@@ -143,7 +143,6 @@ class QPainterBrowser(QWidget):
         # Theme colors
         if is_dark:
             bg_color = QColor("#262421")
-            text_color = QColor("#ffffff")
             num_color = QColor("#8b8987")
             main_move_color = QColor("#ffffff")
             var_move_color = QColor("#8b8987")
@@ -153,7 +152,6 @@ class QPainterBrowser(QWidget):
             bracket_color = QColor("#8b8987")
         else:
             bg_color = QColor("#f1f1f1")
-            text_color = QColor("#312e2b")
             num_color = QColor("#555555")
             main_move_color = QColor("#312e2b")
             var_move_color = QColor("#777777")

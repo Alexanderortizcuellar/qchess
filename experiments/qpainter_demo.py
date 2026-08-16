@@ -8,7 +8,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sr
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from PyQt5.QtCore import Qt, QRect, QSize
+from PyQt5.QtCore import Qt, QRect
 from PyQt5.QtGui import QColor, QFont, QPainter, QFontMetrics, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
@@ -221,16 +221,12 @@ class QPainterBrowser(QWidget):
                 # Set layout fonts and measure token width
                 if token.token_type == "move":
                     if token.level == 0:
-                        font = bold_font
                         fm_current = fm_bold
                     else:
-                        font = normal_font
                         fm_current = fm
                 elif token.token_type == "comment":
-                    font = italic_font
                     fm_current = fm_italic
                 else:
-                    font = normal_font
                     fm_current = fm
                     
                 w = fm_current.width(token.text)

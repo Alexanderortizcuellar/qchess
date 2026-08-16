@@ -1,6 +1,7 @@
-from PyQt5 import QtCore, QtGui, QtWidgets
+import os
 import sys
 import json
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 MOVES = [
     {"black_wins": 1, "draws": 0, "move": "Bd6", "white_wins": 0},
@@ -224,8 +225,6 @@ class OpeningExplorer(QtWidgets.QWidget):
             item.set_theme(self.is_dark)
             self.container_layout.insertWidget(self.container_layout.count() - 1, item)
 
-
-import os
 
 class OpeningProcess(QtCore.QObject):
     dataReady = QtCore.pyqtSignal(list)

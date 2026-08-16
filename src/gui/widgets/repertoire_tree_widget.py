@@ -302,7 +302,6 @@ class RepertoireTreeWidget(QWidget):
 
         self.tree.clear()
         all_nodes = self._repo.get_all_nodes()
-        node_by_id = {n.id: n for n in all_nodes}
 
         # Build QTreeWidgetItems top-down (parents first, which is guaranteed
         # by the ORDER BY sort_order, name)
