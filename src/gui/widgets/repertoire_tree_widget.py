@@ -13,18 +13,17 @@ Context-menu actions:
 import os
 
 import qtawesome as qta
-from PyQt5.QtCore import Qt, pyqtSignal, QMimeData, QPoint
-from PyQt5.QtGui import QFont, QColor, QDragEnterEvent, QDropEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QSize
+from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QTreeWidget,
     QTreeWidgetItem,
+    QAbstractItemView,
     QPushButton,
-    QLabel,
     QMenu,
-    QAction,
     QFileDialog,
     QMessageBox,
     QInputDialog,
@@ -32,7 +31,6 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QComboBox,
     QFormLayout,
-    QLineEdit,
 )
 
 from core.repertoire_db import RepertoireRepository, RepertoireNode
@@ -44,9 +42,58 @@ from core.repertoire_db import RepertoireRepository, RepertoireNode
 NODE_ID_ROLE   = Qt.UserRole
 NODE_TYPE_ROLE = Qt.UserRole + 1
 
-# Colors aligned with the app's QSS palette
-FOLDER_COLOR     = QColor("#c8a86e")   # warm gold — matches orange accent family
-REPERTOIRE_COLOR = QColor("#8fb87a")   # muted green — readable on dark bg
+# Colors aligned with chess-memorization & app QSS palette
+FOLDER_COLOR     = QColor("#fb923c")   # warm amber/orange matching chess-memorization
+REPERTOIRE_COLOR = QColor("#e5e7eb")   # clean light text matching chess-memorization
+
+
+# ---------------------------------------------------------------------------
+# Custom draggable tree view with database persistence
+# ---------------------------------------------------------------------------
+
+class _RepertoireTreeView(QTreeWidget):
+    """QTreeWidget subclass that intercepts drag-and-drop drops to persist them in DB."""
+
+    nodeMoved = pyqtSignal(int, object)  # (dragged_node_id, new_parent_id)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragDropMode(QTreeWidget.InternalMove)
+        self.setSelectionMode(QTreeWidget.SingleSelection)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+
+    def dropEvent(self, event):
+        dragged_items = self.selectedItems()
+        if not dragged_items:
+            event.ignore()
+            return
+
+        dragged_item = dragged_items[0]
+        dragged_id = dragged_item.data(0, NODE_ID_ROLE)
+
+        target_item = self.itemAt(event.pos())
+        drop_pos = self.dropIndicatorPosition()
+
+        if target_item is None or drop_pos == QAbstractItemView.OnViewport:
+            new_parent_id = None
+        elif drop_pos == QAbstractItemView.OnItem:
+            if target_item.data(0, NODE_TYPE_ROLE) == "folder":
+                new_parent_id = target_item.data(0, NODE_ID_ROLE)
+            else:
+                p = target_item.parent()
+                new_parent_id = p.data(0, NODE_ID_ROLE) if p else None
+        else:  # AboveItem or BelowItem
+            p = target_item.parent()
+            new_parent_id = p.data(0, NODE_ID_ROLE) if p else None
+
+        if dragged_id == new_parent_id:
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+        self.nodeMoved.emit(dragged_id, new_parent_id)
 
 
 # ---------------------------------------------------------------------------
@@ -155,18 +202,21 @@ class RepertoireTreeWidget(QWidget):
         root_layout.addWidget(header)
 
         # Tree
-        self.tree = QTreeWidget()
+        self.tree = _RepertoireTreeView(self)
         self.tree.setHeaderHidden(True)
+        self.tree.setRootIsDecorated(True)
         self.tree.setAnimated(True)
         self.tree.setUniformRowHeights(False)
-        self.tree.setDragDropMode(QTreeWidget.InternalMove)
-        self.tree.setSelectionMode(QTreeWidget.SingleSelection)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
         self.tree.itemDoubleClicked.connect(self._on_double_click)
+        self.tree.itemExpanded.connect(self._on_item_expanded)
+        self.tree.itemCollapsed.connect(self._on_item_collapsed)
+        self.tree.nodeMoved.connect(self._on_node_dropped)
         self.tree.setStyleSheet(self._tree_style())
         self.tree.setFont(QFont("Segoe UI", 10))
-        self.tree.setIndentation(18)
+        self.tree.setIndentation(20)
+        self.tree.setIconSize(QSize(18, 18))
         root_layout.addWidget(self.tree, 1)
 
         # Bottom toolbar
@@ -175,67 +225,68 @@ class RepertoireTreeWidget(QWidget):
 
     def _build_header(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(36)
+        w.setFixedHeight(34)
         w.setStyleSheet("""
             QWidget { background: #21201d; border-bottom: 1px solid #312e2b; }
         """)
         layout = QHBoxLayout(w)
-        layout.setContentsMargins(8, 0, 4, 0)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignVCenter)
 
-        lbl = QLabel("Repertoires")
-        lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        lbl.setStyleSheet("color: #8b8987; background: transparent; border: none; text-transform: uppercase; font-size: 11px;")
-        layout.addWidget(lbl, 1)
+        # Spacer so buttons sit at the right edge
+        layout.addStretch()
 
         # New folder button
         btn_folder = QPushButton()
-        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color="#8b8987"))
+        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color="#a9aea7"))
+        btn_folder.setIconSize(QSize(14, 14))
         btn_folder.setToolTip("New Folder")
-        btn_folder.setFixedSize(26, 26)
-        btn_folder.setObjectName("SmallIconButton")
+        btn_folder.setFixedSize(24, 24)
         btn_folder.setCursor(Qt.PointingHandCursor)
         btn_folder.setStyleSheet(self._icon_button_style())
         btn_folder.clicked.connect(self._new_folder_at_root)
-        layout.addWidget(btn_folder)
+        layout.addWidget(btn_folder, 0, Qt.AlignVCenter)
 
         # New repertoire button
         btn_rep = QPushButton()
-        btn_rep.setIcon(qta.icon("fa5s.plus", color="#8b8987"))
+        btn_rep.setIcon(qta.icon("fa5s.plus", color="#a9aea7"))
+        btn_rep.setIconSize(QSize(14, 14))
         btn_rep.setToolTip("New Repertoire")
-        btn_rep.setFixedSize(26, 26)
-        btn_rep.setObjectName("SmallIconButton")
+        btn_rep.setFixedSize(24, 24)
         btn_rep.setCursor(Qt.PointingHandCursor)
         btn_rep.setStyleSheet(self._icon_button_style())
         btn_rep.clicked.connect(self._new_repertoire_at_root)
-        layout.addWidget(btn_rep)
+        layout.addWidget(btn_rep, 0, Qt.AlignVCenter)
 
         return w
 
     def _build_bottom_bar(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(32)
+        w.setFixedHeight(34)
         w.setStyleSheet("""
             QWidget { background: #21201d; border-top: 1px solid #312e2b; }
         """)
         layout = QHBoxLayout(w)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(2)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignVCenter)
 
         def _small_btn(icon_name, tooltip, slot):
             b = QPushButton()
-            b.setIcon(qta.icon(icon_name, color="#8b8987"))
+            b.setIcon(qta.icon(icon_name, color="#a9aea7"))
+            b.setIconSize(QSize(14, 14))
             b.setToolTip(tooltip)
             b.setFixedSize(24, 24)
-            b.setObjectName("SmallIconButton")
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(self._icon_button_style())
             b.clicked.connect(slot)
             return b
 
-        layout.addWidget(_small_btn("fa5s.file-import",  "Import PGN",  self._import_pgn))
-        layout.addWidget(_small_btn("fa5s.file-export",  "Export PGN",  self._export_pgn))
+        layout.addWidget(_small_btn("fa5s.file-import",  "Import PGN",  self._import_pgn), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.file-export",  "Export PGN",  self._export_pgn), 0, Qt.AlignVCenter)
         layout.addStretch()
-        layout.addWidget(_small_btn("fa5s.sync-alt",     "Refresh",     self.refresh))
+        layout.addWidget(_small_btn("fa5s.sync-alt",     "Refresh",     self.refresh), 0, Qt.AlignVCenter)
 
         return w
 
@@ -264,11 +315,11 @@ class RepertoireTreeWidget(QWidget):
             item.setData(0, NODE_TYPE_ROLE, node.node_type)
 
             if node.is_folder():
-                item.setIcon(0, qta.icon("fa5s.folder", color="#6a9fc0"))
+                item.setIcon(0, qta.icon("fa5s.folder", color="#fb923c"))
                 item.setForeground(0, FOLDER_COLOR)
                 item.setFlags(item.flags() | Qt.ItemIsDropEnabled)
             else:
-                item.setIcon(0, qta.icon("fa5s.chess-board", color="#76b887"))
+                item.setIcon(0, qta.icon("fa5s.chess-knight", color="#cbd5e1"))
                 item.setForeground(0, REPERTOIRE_COLOR)
                 item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
 
@@ -312,7 +363,43 @@ class RepertoireTreeWidget(QWidget):
             nid = child.data(0, NODE_ID_ROLE)
             if nid in expanded_ids:
                 child.setExpanded(True)
+                if child.data(0, NODE_TYPE_ROLE) == "folder":
+                    child.setIcon(0, qta.icon("fa5s.folder-open", color="#fb923c"))
             self._restore_expanded(child, expanded_ids)
+
+    def _on_item_expanded(self, item: QTreeWidgetItem):
+        if item.data(0, NODE_TYPE_ROLE) == "folder":
+            item.setIcon(0, qta.icon("fa5s.folder-open", color="#fb923c"))
+
+    def _on_item_collapsed(self, item: QTreeWidgetItem):
+        if item.data(0, NODE_TYPE_ROLE) == "folder":
+            item.setIcon(0, qta.icon("fa5s.folder", color="#fb923c"))
+
+    def _is_descendant(self, node_id: int, candidate_parent_id) -> bool:
+        """Return True if candidate_parent_id is node_id or a descendant of node_id."""
+        if candidate_parent_id is None:
+            return False
+        if node_id == candidate_parent_id:
+            return True
+
+        cur_id = candidate_parent_id
+        visited = set()
+        while cur_id is not None and cur_id not in visited:
+            visited.add(cur_id)
+            node = self._repo.get_node(cur_id)
+            if not node:
+                break
+            if node.parent_id == node_id:
+                return True
+            cur_id = node.parent_id
+        return False
+
+    def _on_node_dropped(self, dragged_id: int, new_parent_id):
+        """Persist drag-and-drop hierarchy changes to the database."""
+        if self._is_descendant(dragged_id, new_parent_id):
+            return
+        self._repo.move_node(dragged_id, new_parent_id)
+        self.refresh()
 
     # ------------------------------------------------------------------
     # Context menu
@@ -325,39 +412,39 @@ class RepertoireTreeWidget(QWidget):
 
         if item is None:
             # Clicked on empty space — only allow creation at root
-            menu.addAction(qta.icon("fa5s.folder-plus", color="#6a9fc0"),
+            menu.addAction(qta.icon("fa5s.folder-plus", color="#fb923c"),
                            "New Folder",       self._new_folder_at_root)
-            menu.addAction(qta.icon("fa5s.plus", color="#76b887"),
+            menu.addAction(qta.icon("fa5s.plus", color="#cbd5e1"),
                            "New Repertoire",   self._new_repertoire_at_root)
         else:
             node_type = item.data(0, NODE_TYPE_ROLE)
 
             if node_type == "folder":
-                menu.addAction(qta.icon("fa5s.folder-plus", color="#6a9fc0"),
+                menu.addAction(qta.icon("fa5s.folder-plus", color="#fb923c"),
                                "New Subfolder",   lambda: self._new_folder(item))
-                menu.addAction(qta.icon("fa5s.plus", color="#76b887"),
+                menu.addAction(qta.icon("fa5s.plus", color="#cbd5e1"),
                                "New Repertoire",  lambda: self._new_repertoire(item))
                 menu.addSeparator()
 
             if node_type == "repertoire":
-                menu.addAction(qta.icon("fa5s.external-link-alt", color="#76b887"),
+                menu.addAction(qta.icon("fa5s.chess-knight", color="#cbd5e1"),
                                "Open",            lambda: self._open_repertoire(item))
                 menu.addSeparator()
 
-            menu.addAction(qta.icon("fa5s.pen", color="#c0b060"),
+            menu.addAction(qta.icon("fa5s.pen", color="#e6912c"),
                            "Rename",              lambda: self._rename(item))
-            menu.addAction(qta.icon("fa5s.arrows-alt", color="#9090c0"),
+            menu.addAction(qta.icon("fa5s.arrows-alt", color="#9ca3af"),
                            "Move…",               lambda: self._move(item))
             menu.addSeparator()
 
             if node_type == "repertoire":
-                menu.addAction(qta.icon("fa5s.file-import", color="#7090b0"),
+                menu.addAction(qta.icon("fa5s.file-import", color="#a9aea7"),
                                "Import PGN…",     lambda: self._import_pgn_into(item))
-                menu.addAction(qta.icon("fa5s.file-export", color="#7090b0"),
+                menu.addAction(qta.icon("fa5s.file-export", color="#a9aea7"),
                                "Export PGN…",     lambda: self._export_pgn_of(item))
                 menu.addSeparator()
 
-            act_del = menu.addAction(qta.icon("fa5s.trash-alt", color="#c06060"),
+            act_del = menu.addAction(qta.icon("fa5s.trash-alt", color="#f87171"),
                                      "Delete")
             act_del.triggered.connect(lambda: self._delete(item))
 
@@ -551,34 +638,29 @@ class RepertoireTreeWidget(QWidget):
 
     # ------------------------------------------------------------------
     # Styling helpers
-    # -------------------------------------------
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _tree_style() -> str:
         return """
         QTreeWidget {
             background-color: #262421;
             border: none;
-            color: #bababa;
+            color: #e5e7eb;
             outline: none;
         }
         QTreeWidget::item {
-            padding: 3px 4px;
-            border-radius: 3px;
+            padding: 6px 4px;
+            border-bottom: 1px solid #21201d;
+            border-radius: 4px;
         }
         QTreeWidget::item:hover {
-            background: #312e2b;
-        }
-        QTreeWidget::item:selected {
-            background: #403d39;
+            background-color: #312e2b;
             color: #ffffff;
         }
-        QTreeWidget::branch:has-children:!has-siblings:closed,
-        QTreeWidget::branch:closed:has-children:has-siblings {
-            image: url(none);
-        }
-        QTreeWidget::branch:open:has-children:!has-siblings,
-        QTreeWidget::branch:open:has-children:has-siblings {
-            image: url(none);
+        QTreeWidget::item:selected {
+            background-color: #403d39;
+            color: #ffffff;
         }
         """
 
@@ -586,16 +668,20 @@ class RepertoireTreeWidget(QWidget):
     def _icon_button_style() -> str:
         return """
         QPushButton {
-            background: transparent;
+            background-color: transparent;
             border: 1px solid transparent;
             border-radius: 3px;
+            padding: 0px;
+            margin: 0px;
+            min-width: 0px;
+            min-height: 0px;
         }
         QPushButton:hover {
-            background: #312e2b;
-            border-color: #403d39;
+            background-color: #312e2b;
+            border: 1px solid #403d39;
         }
         QPushButton:pressed {
-            background: #21201d;
+            background-color: #21201d;
         }
         """
 

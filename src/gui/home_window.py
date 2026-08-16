@@ -218,7 +218,7 @@ class HomeWindow(QMainWindow):
 
         return page
 
-    # ──────────────────────── Toolbar ────────────────────────
+    # ──────────────────────── Toolbar & Menu ────────────────────────
 
     def _init_toolbar(self):
         self.toolbar = QToolBar("Main Toolbar")
@@ -240,6 +240,21 @@ class HomeWindow(QMainWindow):
         home_act = QAction(qta.icon("fa5s.home", color="#a9aea7"), "Home", self)
         home_act.triggered.connect(self._go_home)
         self.toolbar.addAction(home_act)
+
+        # ── Menu bar ──
+        self._init_menubar()
+
+    def _init_menubar(self):
+        """Add a minimal menu bar with a View menu for dock visibility."""
+        view_menu = self.menuBar().addMenu("&View")
+
+        # The dock's own toggleViewAction() is checkable and stays in sync
+        # with close/show events automatically.
+        toggle_act = self._repertoire_dock.toggleViewAction()
+        toggle_act.setText("Repertoires")
+        toggle_act.setShortcut("Ctrl+Shift+E")
+        toggle_act.setIcon(qta.icon("fa5s.chess-board", color="#a9aea7"))
+        view_menu.addAction(toggle_act)
 
     # ──────────────────────── Public API ────────────────────────
 
