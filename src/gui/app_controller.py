@@ -59,6 +59,7 @@ class ApplicationController(QObject):
             editor.current_pgn_offset = game_data.get("_offset")
             editor.current_pgn_length = game_data.get("_length")
             editor.move_manager.update_pgn(pgn_text)
+            editor.move_manager.is_dirty = False
             editor.display_pgn()
             editor.chessboard.update_board(editor.move_manager.get_board().fen())
 
@@ -79,7 +80,7 @@ class ApplicationController(QObject):
         
         self._pending_reindex_game_idx = None
         if old_offset is not None:
-            # Query the 0-based game index from the current SQLite db of HomeWindow
+            conn = None
             try:
                 db_path = pgn_path + ".db"
                 if os.path.exists(db_path):
@@ -87,10 +88,12 @@ class ApplicationController(QObject):
                     cursor = conn.cursor()
                     cursor.execute("SELECT COUNT(*) FROM games WHERE offset < ?", (old_offset,))
                     self._pending_reindex_game_idx = cursor.fetchone()[0]
-                    conn.close()
             except Exception as e:
                 print(f"Error getting game index before reindexing: {e}")
                 self._pending_reindex_game_idx = None
+            finally:
+                if conn:
+                    conn.close()
 
         # Trigger reindexing in HomeWindow
         self.home.load_pgn_path(pgn_path)

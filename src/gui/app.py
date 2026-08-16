@@ -112,7 +112,9 @@ class ChessApp(QMainWindow):
         board_group_layout.addWidget(self.chessboard, stretch=1)
 
         # FEN display area
-        self.fen_row = QHBoxLayout()
+        self.fen_container = QWidget()
+        self.fen_row = QHBoxLayout(self.fen_container)
+        self.fen_row.setContentsMargins(0, 0, 0, 0)
         self.fen_label = QLabel("FEN:")
         self.fen_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.fen_edit = QLineEdit()
@@ -122,9 +124,12 @@ class ChessApp(QMainWindow):
         self.fen_row.addWidget(self.fen_label)
         self.fen_row.addWidget(self.fen_edit, stretch=1)
 
-        board_group_layout.addLayout(self.fen_row)
+        board_group_layout.addWidget(self.fen_container)
 
-        self.fen_label.setVisible(self.bar.isVisible())
+        from PyQt5.QtCore import QSettings
+        layout_settings = QSettings("TestChessApp", "Layout")
+        show_fen = layout_settings.value("show_fen", "true") == "true"
+        self.fen_container.setVisible(show_fen)
 
         central_layout.addWidget(board_group, stretch=1)
 
@@ -510,6 +515,9 @@ class ChessApp(QMainWindow):
         copy_board_img_action = _create_action(
             self, "Copy Board Image", self.copy_board_image, "Ctrl+Shift+C", icon_name="fa5s.copy"
         )
+        copy_fen_action = _create_action(
+            self, "Copy FEN", self.copy_current_fen, "Ctrl+Shift+F", icon_name="fa5s.copy"
+        )
 
         engine_menu = self.menuBar().addMenu("&Engine")
         engine_action = _create_action(
@@ -536,6 +544,18 @@ class ChessApp(QMainWindow):
             icon_name="fa5s.play",
             checkable=True,
         )
+
+        self.show_fen_action = _create_action(
+            self,
+            "Show FEN under Chessboard",
+            self.toggle_fen_visibility,
+            shortcut=None,
+            checkable=True,
+        )
+        from PyQt5.QtCore import QSettings
+        layout_settings = QSettings("TestChessApp", "Layout")
+        show_fen = layout_settings.value("show_fen", "true") == "true"
+        self.show_fen_action.setChecked(show_fen)
 
         docks_menu = view_menu.addMenu("&Docks")
         docks_menu.addAction(self.pgn_dock.toggleViewAction())
@@ -570,12 +590,14 @@ class ChessApp(QMainWindow):
         board_menu.addSeparator()
         board_menu.addAction(export_img_action)
         board_menu.addAction(copy_board_img_action)
+        board_menu.addAction(copy_fen_action)
 
         engine_menu.addAction(engine_action)
 
         view_menu.addAction(dark_action)
         view_menu.addAction(light_action)
         view_menu.addSeparator()
+        view_menu.addAction(self.show_fen_action)
         view_menu.addAction(self.autoplay_action)
 
         # Quick Access Toolbar Actions
@@ -681,8 +703,14 @@ class ChessApp(QMainWindow):
         
         show_eval = settings.value("show_eval_annotations", True, type=bool)
         show_cls = settings.value("show_move_classifications", True, type=bool)
+        show_vars = settings.value("show_variations", True, type=bool)
+        layout_val = int(settings.value("layout_mode", 1))
+
         self.browser.show_eval = show_eval
         self.browser.show_classifications = show_cls
+        self.browser.show_variations = show_vars
+        self.browser.layout_mode = layout_val
+
         self.move_manager.show_classifications = show_cls
         self.move_manager.create_mapping()
         self.browser.rebuild_layout(force=True)
@@ -922,14 +950,12 @@ class ChessApp(QMainWindow):
             if not self.engine.is_running():
                 self.engine.start()
             self.chessboard.set_eval_bar_visible(True)
-            self.fen_label.show()
             self.send_position(force=True)
         else:
             self.engine.stop_search()
             self.analysis_widget.clear()
             self.clear_pending_analysis()
             self.chessboard.set_eval_bar_visible(False)
-            self.fen_label.hide()
 
     def display_pgn(self):
         self.browser.setHtml(self.move_manager.html)
@@ -1008,9 +1034,14 @@ class ChessApp(QMainWindow):
     def open_engine_config(self):
         dlg = EngineConfigDialog(self)
         if dlg.exec_() == QDialog.Accepted:
+            self.engine.quit()
             self.engine.set_settings(dlg.get_config())
             if self.analysis_widget.check_analysis.isChecked():
+                self.engine.start()
                 self.send_position(force=True)
+        else:
+            if not self.analysis_widget.check_analysis.isChecked():
+                self.engine.quit()
 
     def paste_pgn(self):
         pgn_text = QApplication.clipboard().text()
@@ -1108,6 +1139,14 @@ class ChessApp(QMainWindow):
     def copy_text(self, text: str):
         QApplication.clipboard().setText(text)
 
+    def copy_current_fen(self):
+        fen = self.chessboard.fen()
+        self.copy_text(fen)
+        self.statusBar().showMessage("FEN copied to clipboard.")
+
+    def toggle_fen_visibility(self, visible: bool):
+        self.fen_container.setVisible(visible)
+
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Wheel:
             if watched in (
@@ -1129,6 +1168,7 @@ class ChessApp(QMainWindow):
         layout_settings = QSettings("TestChessApp", "Layout")
         layout_settings.setValue("geometry", self.saveGeometry())
         layout_settings.setValue("windowState", self.saveState())
+        layout_settings.setValue("show_fen", "true" if self.show_fen_action.isChecked() else "false")
 
         if self.move_manager.is_dirty:
             msg_box = QMessageBox(self)

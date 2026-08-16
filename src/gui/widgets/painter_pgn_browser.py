@@ -459,8 +459,10 @@ class QPainterPGNBrowser(QWidget):
         
         # Check if PGN nodes or headers have changed to determine if we should rebuild the layout cache
         current_nodes = getattr(self.move_manager, 'nodes', [])
+        current_comments = [getattr(node, 'comment', '') for node in current_nodes]
         nodes_changed = True
-        if hasattr(self, 'cached_nodes') and len(self.cached_nodes) == len(current_nodes):
+        if (hasattr(self, 'cached_nodes') and len(self.cached_nodes) == len(current_nodes) and
+            hasattr(self, 'cached_comments') and self.cached_comments == current_comments):
             nodes_changed = False
             for i in range(len(current_nodes)):
                 if self.cached_nodes[i] is not current_nodes[i]:
@@ -481,6 +483,7 @@ class QPainterPGNBrowser(QWidget):
         
         if force or nodes_changed or headers_changed or width_changed or getattr(self, 'layout_invalid', False):
             self.cached_nodes = list(current_nodes)
+            self.cached_comments = list(current_comments)
             self.cached_headers = current_headers
             self.last_layout_width = layout_width
             self.layout_invalid = False

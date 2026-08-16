@@ -63,6 +63,11 @@ class SettingsDialog(QDialog):
         browser_form.addRow(self.show_eval_cb)
         self.show_classifications_cb = QCheckBox("Show Move Classification colors")
         browser_form.addRow(self.show_classifications_cb)
+        self.show_variations_cb = QCheckBox("Show Variations")
+        browser_form.addRow(self.show_variations_cb)
+        self.layout_mode_combo = QComboBox()
+        self.layout_mode_combo.addItems(["Columns (One Move per Line)", "ChessBase Blocks"])
+        browser_form.addRow("Layout Mode:", self.layout_mode_combo)
         layout.addWidget(browser_group)
 
         # --- Mode Settings ---
@@ -111,6 +116,12 @@ class SettingsDialog(QDialog):
         show_cls = self.settings.value("show_move_classifications", True, type=bool)
         self.show_classifications_cb.setChecked(show_cls)
 
+        show_vars = self.settings.value("show_variations", True, type=bool)
+        self.show_variations_cb.setChecked(show_vars)
+
+        layout_val = int(self.settings.value("layout_mode", 1))
+        self.layout_mode_combo.setCurrentIndex(layout_val)
+
         pgn_path = self.settings.value(
             "explorer_pgn_path",
             r"C:\Users\ASUS\programming\qt_programs\chess\downloader\alex.pgn"
@@ -127,6 +138,8 @@ class SettingsDialog(QDialog):
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
         self.settings.setValue("show_eval_annotations", self.show_eval_cb.isChecked())
         self.settings.setValue("show_move_classifications", self.show_classifications_cb.isChecked())
+        self.settings.setValue("show_variations", self.show_variations_cb.isChecked())
+        self.settings.setValue("layout_mode", self.layout_mode_combo.currentIndex())
         self.settings.setValue("explorer_pgn_path", self.pgn_path_edit.text())
         self.settings.setValue("app_mode", self.mode_combo.currentText())
         self.accept()
@@ -139,6 +152,8 @@ class SettingsDialog(QDialog):
             "use_figurine_font": self.figurine_font_cb.isChecked(),
             "show_eval_annotations": self.show_eval_cb.isChecked(),
             "show_move_classifications": self.show_classifications_cb.isChecked(),
+            "show_variations": self.show_variations_cb.isChecked(),
+            "layout_mode": self.layout_mode_combo.currentIndex(),
             "explorer_pgn_path": self.pgn_path_edit.text(),
             "app_mode": self.mode_combo.currentText()
         }

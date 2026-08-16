@@ -136,6 +136,11 @@ class GameListTableModel(QtCore.QAbstractTableModel):
         self._cache_start = -1
         self._cache_size = 200
 
+        self._lazy_load_timer = QtCore.QTimer()
+        self._lazy_load_timer.setSingleShot(True)
+        self._lazy_load_timer.timeout.connect(self._on_lazy_load_timeout)
+        self._pending_load_row = -1
+
     def set_db(self, conn, total_rows, pgn_path):
         self.beginResetModel()
         self.conn = conn
@@ -226,7 +231,9 @@ class GameListTableModel(QtCore.QAbstractTableModel):
         if role in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole):
             # Fetch cache block if requested index is outside the sliding window
             if not (self._cache_start <= row < self._cache_start + len(self._cache)):
-                self._load_cache_slice(row)
+                self._pending_load_row = row
+                self._lazy_load_timer.start(80)  # 80ms debounce
+                return None
 
             row_data = self._cache.get(row)
             if not row_data:
@@ -301,6 +308,13 @@ class GameListTableModel(QtCore.QAbstractTableModel):
         for idx, r in enumerate(rows):
             self._cache[start + idx] = r
         self._cache_start = start
+
+    def _on_lazy_load_timeout(self):
+        if self._pending_load_row != -1:
+            row = self._pending_load_row
+            self._pending_load_row = -1
+            self._load_cache_slice(row)
+            self.layoutChanged.emit()
 
     def headerData(
         self,

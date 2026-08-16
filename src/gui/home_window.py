@@ -233,6 +233,7 @@ class HomeWindow(QMainWindow):
                 return
 
         # Need to index
+        self.game_table.clear()
         self.status_bar.showMessage(f"Indexing {os.path.basename(pgn_path)}...")
         self.progress_bar.show()
         self.indexer.index_pgn(pgn_path)
