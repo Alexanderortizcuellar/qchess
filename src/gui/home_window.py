@@ -4,6 +4,7 @@ import qtawesome as qta
 from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
+    QDockWidget,
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -18,7 +19,9 @@ from PyQt5.QtWidgets import (
 )
 
 from gui.widgets.game_list_table import GameListTableWidget
+from gui.widgets.repertoire_tree_widget import RepertoireTreeWidget
 from core.indexer import PGNIndexerProcess
+from core.repertoire_db import RepertoireRepository
 
 
 class HomeWindow(QMainWindow):
@@ -29,16 +32,19 @@ class HomeWindow(QMainWindow):
             The dict contains game metadata + raw PGN text.
         openEditorRequested(): Emitted when the user clicks "New Analysis".
         databaseOpened(str, str): Emitted with (db_path, pgn_path) when a database is loaded.
+        repertoireOpenRequested(int, str): Emitted when the user opens a repertoire.
+            Carries (node_id, pgn_text).
     """
 
     gameSelected = pyqtSignal(dict)
     openEditorRequested = pyqtSignal()
     databaseOpened = pyqtSignal(str, str)
+    repertoireOpenRequested = pyqtSignal(int, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("QChess — Home")
-        self.resize(1100, 700)
+        self.resize(1200, 700)
         self.is_dark = True
 
         self._current_pgn_path = None
@@ -75,10 +81,56 @@ class HomeWindow(QMainWindow):
         self.progress_bar.hide()
         self.status_bar.addPermanentWidget(self.progress_bar)
 
+        # -- Repertoire dock --
+        self._init_repertoire_dock()
+
         # -- Toolbar --
         self._init_toolbar()
 
+    # ──────────────────────── Repertoire Dock ────────────────────────
+
+    def _init_repertoire_dock(self):
+        """Create the Repertoires dock panel and attach it on the left."""
+        # Resolve DB path: stored alongside app data in user's home
+        data_dir = os.path.join(os.path.expanduser("~"), ".qchess")
+        db_path = os.path.join(data_dir, "repertoires.db")
+
+        repo = RepertoireRepository(db_path)
+
+        self.repertoire_tree = RepertoireTreeWidget(repo)
+        self.repertoire_tree.repertoireOpenRequested.connect(
+            self.repertoireOpenRequested.emit
+        )
+
+        dock = QDockWidget("Repertoires", self)
+        dock.setObjectName("RepertoiresDock")
+        dock.setWidget(self.repertoire_tree)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable |
+            QDockWidget.DockWidgetFloatable |
+            QDockWidget.DockWidgetClosable
+        )
+        dock.setMinimumWidth(200)
+        dock.setStyleSheet("""
+            QDockWidget {
+                color: #c8cdd5;
+                font-size: 11px;
+                font-weight: bold;
+                background: #1a1e24;
+            }
+            QDockWidget::title {
+                background: #1a1e24;
+                padding: 6px 8px;
+                border-bottom: 1px solid #252a32;
+            }
+        """)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        self._repertoire_dock = dock
+
     # ──────────────────────── Welcome Page ────────────────────────
+
+
 
     def _build_welcome_page(self) -> QWidget:
         page = QWidget()
