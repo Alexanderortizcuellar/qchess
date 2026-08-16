@@ -112,19 +112,8 @@ class HomeWindow(QMainWindow):
             QDockWidget.DockWidgetClosable
         )
         dock.setMinimumWidth(200)
-        dock.setStyleSheet("""
-            QDockWidget {
-                color: #c8cdd5;
-                font-size: 11px;
-                font-weight: bold;
-                background: #1a1e24;
-            }
-            QDockWidget::title {
-                background: #1a1e24;
-                padding: 6px 8px;
-                border-bottom: 1px solid #252a32;
-            }
-        """)
+        # Deliberately no per-widget stylesheet — let the global QSS (style.qss) handle
+        # QDockWidget styling so the dock matches the rest of the app automatically.
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._repertoire_dock = dock
 

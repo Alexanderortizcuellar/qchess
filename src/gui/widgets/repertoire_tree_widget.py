@@ -44,8 +44,9 @@ from core.repertoire_db import RepertoireRepository, RepertoireNode
 NODE_ID_ROLE   = Qt.UserRole
 NODE_TYPE_ROLE = Qt.UserRole + 1
 
-FOLDER_COLOR     = QColor("#a8c4e0")
-REPERTOIRE_COLOR = QColor("#b8d4a8")
+# Colors aligned with the app's QSS palette
+FOLDER_COLOR     = QColor("#c8a86e")   # warm gold — matches orange accent family
+REPERTOIRE_COLOR = QColor("#8fb87a")   # muted green — readable on dark bg
 
 
 # ---------------------------------------------------------------------------
@@ -66,19 +67,19 @@ class MoveFolderDialog(QDialog):
         self.setMinimumWidth(360)
 
         self.setStyleSheet("""
-            QDialog { background: #1a1e24; color: #e0e0e0; }
-            QLabel  { color: #9aa0a8; font-weight: bold; }
+            QDialog { background: #262421; color: #bababa; }
+            QLabel  { color: #8b8987; font-weight: bold; }
             QComboBox {
-                background: #111418; color: #e0e0e0;
-                border: 1px solid #2d3340; border-radius: 5px;
-                padding: 6px; font-size: 13px;
+                background: #312e2b; color: #ffffff;
+                border: 1px solid #403d39; border-radius: 3px;
+                padding: 5px; font-size: 13px;
             }
             QPushButton {
-                background: #4a78c4; color: white;
-                border: none; border-radius: 6px; padding: 7px 16px; font-weight: bold;
+                background: #312e2b; color: #ffffff;
+                border: 1px solid #403d39; border-radius: 3px; padding: 5px 14px;
             }
-            QPushButton:hover { background: #5a88d4; }
-            QPushButton[flat="true"] { background: transparent; color: #9aa0a8; border: 1px solid #2d3340; }
+            QPushButton:hover { background: #383531; border-color: #504d48; }
+            QPushButton:pressed { background: #21201d; }
         """)
 
         layout = QVBoxLayout(self)
@@ -174,23 +175,24 @@ class RepertoireTreeWidget(QWidget):
 
     def _build_header(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(40)
+        w.setFixedHeight(36)
         w.setStyleSheet("""
-            QWidget { background: #1a1e24; border-bottom: 1px solid #252a32; }
+            QWidget { background: #21201d; border-bottom: 1px solid #312e2b; }
         """)
         layout = QHBoxLayout(w)
-        layout.setContentsMargins(10, 0, 6, 0)
+        layout.setContentsMargins(8, 0, 4, 0)
 
         lbl = QLabel("Repertoires")
         lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        lbl.setStyleSheet("color: #c8cdd5; background: transparent; border: none;")
+        lbl.setStyleSheet("color: #8b8987; background: transparent; border: none; text-transform: uppercase; font-size: 11px;")
         layout.addWidget(lbl, 1)
 
         # New folder button
         btn_folder = QPushButton()
-        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color="#7a8ca0"))
+        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color="#8b8987"))
         btn_folder.setToolTip("New Folder")
-        btn_folder.setFixedSize(28, 28)
+        btn_folder.setFixedSize(26, 26)
+        btn_folder.setObjectName("SmallIconButton")
         btn_folder.setCursor(Qt.PointingHandCursor)
         btn_folder.setStyleSheet(self._icon_button_style())
         btn_folder.clicked.connect(self._new_folder_at_root)
@@ -198,9 +200,10 @@ class RepertoireTreeWidget(QWidget):
 
         # New repertoire button
         btn_rep = QPushButton()
-        btn_rep.setIcon(qta.icon("fa5s.plus", color="#7a8ca0"))
+        btn_rep.setIcon(qta.icon("fa5s.plus", color="#8b8987"))
         btn_rep.setToolTip("New Repertoire")
-        btn_rep.setFixedSize(28, 28)
+        btn_rep.setFixedSize(26, 26)
+        btn_rep.setObjectName("SmallIconButton")
         btn_rep.setCursor(Qt.PointingHandCursor)
         btn_rep.setStyleSheet(self._icon_button_style())
         btn_rep.clicked.connect(self._new_repertoire_at_root)
@@ -210,19 +213,20 @@ class RepertoireTreeWidget(QWidget):
 
     def _build_bottom_bar(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(36)
+        w.setFixedHeight(32)
         w.setStyleSheet("""
-            QWidget { background: #161a1f; border-top: 1px solid #252a32; }
+            QWidget { background: #21201d; border-top: 1px solid #312e2b; }
         """)
         layout = QHBoxLayout(w)
-        layout.setContentsMargins(6, 0, 6, 0)
-        layout.setSpacing(4)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(2)
 
         def _small_btn(icon_name, tooltip, slot):
             b = QPushButton()
-            b.setIcon(qta.icon(icon_name, color="#606878"))
+            b.setIcon(qta.icon(icon_name, color="#8b8987"))
             b.setToolTip(tooltip)
-            b.setFixedSize(26, 26)
+            b.setFixedSize(24, 24)
+            b.setObjectName("SmallIconButton")
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(self._icon_button_style())
             b.clicked.connect(slot)
@@ -547,27 +551,26 @@ class RepertoireTreeWidget(QWidget):
 
     # ------------------------------------------------------------------
     # Styling helpers
-    # ------------------------------------------------------------------
-
+    # -------------------------------------------
     @staticmethod
     def _tree_style() -> str:
         return """
         QTreeWidget {
-            background-color: #161a1f;
+            background-color: #262421;
             border: none;
-            color: #c8cdd5;
+            color: #bababa;
             outline: none;
         }
         QTreeWidget::item {
-            padding: 4px 4px;
-            border-radius: 4px;
+            padding: 3px 4px;
+            border-radius: 3px;
         }
         QTreeWidget::item:hover {
-            background: #1e2530;
+            background: #312e2b;
         }
         QTreeWidget::item:selected {
-            background: #243040;
-            color: #e0e8f0;
+            background: #403d39;
+            color: #ffffff;
         }
         QTreeWidget::branch:has-children:!has-siblings:closed,
         QTreeWidget::branch:closed:has-children:has-siblings {
@@ -584,14 +587,15 @@ class RepertoireTreeWidget(QWidget):
         return """
         QPushButton {
             background: transparent;
-            border: none;
-            border-radius: 5px;
+            border: 1px solid transparent;
+            border-radius: 3px;
         }
         QPushButton:hover {
-            background: #252c38;
+            background: #312e2b;
+            border-color: #403d39;
         }
         QPushButton:pressed {
-            background: #1e2530;
+            background: #21201d;
         }
         """
 
@@ -599,24 +603,25 @@ class RepertoireTreeWidget(QWidget):
     def _menu_style() -> str:
         return """
         QMenu {
-            background: #1a1e24;
-            border: 1px solid #2d3340;
-            border-radius: 6px;
+            background: #262421;
+            border: 1px solid #403d39;
+            border-radius: 4px;
             padding: 4px;
-            color: #c8cdd5;
+            color: #bababa;
             font-size: 13px;
         }
         QMenu::item {
             padding: 6px 20px 6px 10px;
-            border-radius: 4px;
+            border-radius: 3px;
+            margin: 1px 2px;
         }
         QMenu::item:selected {
-            background: #243040;
-            color: #e0e8f0;
+            background: #312e2b;
+            color: #ffffff;
         }
         QMenu::separator {
             height: 1px;
-            background: #2d3340;
+            background: #403d39;
             margin: 4px 8px;
         }
         """

@@ -70,6 +70,7 @@ class ApplicationController(QObject):
 
         # Switching to a regular game — clear repertoire context
         self._active_repertoire_node_id = None
+        self._set_repertoire_mode(editor, False)
 
         if pgn_text:
             editor.current_pgn_path = game_data.get("_pgn_path")
@@ -98,6 +99,7 @@ class ApplicationController(QObject):
         """
         editor = self._get_or_create_editor()
         self._active_repertoire_node_id = node_id
+        self._set_repertoire_mode(editor, True)
 
         # Clear PGN file coordinates — this is a DB-backed repertoire
         editor.current_pgn_path = None
@@ -122,6 +124,23 @@ class ApplicationController(QObject):
         editor.show()
         editor.raise_()
         editor.activateWindow()
+
+    def _on_repertoire_save_requested(self, pgn_text: str):
+        """Handle repertoireSaveRequested from the editor's File menu.
+
+        Routes the PGN directly to the repository via the tree widget.
+        """
+        if self._active_repertoire_node_id is not None:
+            self.home.repertoire_tree.on_repertoire_saved(
+                self._active_repertoire_node_id, pgn_text
+            )
+
+    def _set_repertoire_mode(self, editor, is_repertoire: bool):
+        """Show or hide the 'Save Repertoire' action in the editor's File menu."""
+        try:
+            editor.save_repertoire_action.setVisible(is_repertoire)
+        except AttributeError:
+            pass  # Action not yet created (editor not fully initialized)
 
     def _on_game_saved(self, pgn_path: str, old_offset, old_length):
         """Handle a game save notification from the editor.
@@ -212,6 +231,7 @@ class ApplicationController(QObject):
         # Clear repertoire context
         self._active_repertoire_node_id = None
         editor = self._get_or_create_editor()
+        self._set_repertoire_mode(editor, False)
         editor.show()
         editor.raise_()
         editor.activateWindow()
@@ -233,6 +253,7 @@ class ApplicationController(QObject):
 
             self._editor = ChessApp()
             self._editor.gameSaved.connect(self._on_game_saved)
+            self._editor.repertoireSaveRequested.connect(self._on_repertoire_save_requested)
             self._editor.set_style("dark")
             self._editor.setWindowIcon(self.home.windowIcon())
 

@@ -44,6 +44,9 @@ from core.pgn_editor import save_game_to_pgn
 
 class ChessApp(QMainWindow):
     gameSaved = pyqtSignal(str, object, object)
+    # Emitted when the user saves a repertoire from the File menu.
+    # Carries the current PGN text; the controller decides where to store it.
+    repertoireSaveRequested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -576,6 +579,18 @@ class ChessApp(QMainWindow):
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
         file_menu.addAction(save_as_action)
+        file_menu.addSeparator()
+        # Repertoire save — visible only when editing a repertoire (controller manages this)
+        self.save_repertoire_action = _create_action(
+            self,
+            "Save Repertoire",
+            self._save_repertoire,
+            "Ctrl+Shift+R",
+            icon_name="fa5s.chess-board",
+        )
+        self.save_repertoire_action.setVisible(False)
+        file_menu.addAction(self.save_repertoire_action)
+        file_menu.addSeparator()
         file_menu.addAction(copy_action)
         file_menu.addAction(paste_pgn_action)
         file_menu.addAction(edit_headers_action)
@@ -1124,6 +1139,18 @@ class ChessApp(QMainWindow):
                     self.gameSaved.emit(self.current_pgn_path, self.current_pgn_offset, self.current_pgn_length)
                 except Exception as e:
                     QMessageBox.critical(self, "Save Error", f"Could not save PGN: {str(e)}")
+
+    def _save_repertoire(self):
+        """Save the current PGN back to the active repertoire in the database.
+
+        The editor knows nothing about storage — it simply emits the signal
+        with the current PGN and lets the ApplicationController route it to
+        the RepertoireRepository via the HomeWindow's tree widget.
+        """
+        pgn_text = self.move_manager.get_pgn()
+        self.repertoireSaveRequested.emit(pgn_text)
+        self.move_manager.is_dirty = False
+        self.statusBar().showMessage("Repertoire saved.")
 
     def export_board_image(self):
         file, ok = QFileDialog.getSaveFileName(
