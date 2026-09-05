@@ -154,28 +154,35 @@ class HtmlExporterMixin:
             elif self.force_movenumber:
                 prefix = f'<span class="num">{move_number}...</span> '
 
-            san = html.escape(board.san(move))
-
+            san_raw = board.san(move)
+            
             # use current index as ID and href
             is_highlighted = self.move_index == self.highlight_index
             highlight_class = " highlight" if is_highlighted else ""
             
-            import re
             node_cls = None
+            node = None
             if self.nodes and self.move_index < len(self.nodes):
                 node = self.nodes[self.move_index]
-                if node.comment:
-                    alz_match = re.search(r'\[%alz\s+([^\]]+)\]', node.comment)
-                    if alz_match:
-                        cls_tokens = alz_match.group(1).split()
-                        for token in cls_tokens:
-                            if token.startswith("cls="):
-                                try:
-                                    node_cls = int(token.split("=")[1])
-                                except ValueError:
-                                    pass
+
+            if node is not None and hasattr(node, "nags") and node.nags:
+                from core.move_manager import NAG_TO_CLS
+                for nag in sorted(node.nags):
+                    if nag in NAG_TO_CLS:
+                        node_cls = NAG_TO_CLS[nag]
+                        break
+
+            # Format NAG symbols on SAN if enabled
+            if getattr(self, "show_nags", True):
+                from core.move_manager import format_san_with_nags
+                san = html.escape(format_san_with_nags(san_raw, getattr(node, "nags", None) if node else None))
+            else:
+                san = html.escape(san_raw)
 
             CLS_CLASS_MAP = {
+                1: "cls-great",
+                2: "cls-excellent",
+                3: "cls-brilliant",
                 4: "cls-inaccuracy",
                 5: "cls-mistake",
                 6: "cls-blunder",

@@ -9,11 +9,16 @@ class ChessEngine(QtCore.QProcess):
     depthChanged = QtCore.pyqtSignal(int)
     analysisUpdated = QtCore.pyqtSignal(dict)  # Emits dict with MultiPV info
 
-    def __init__(self, engine_path, parent=None):
+    def __init__(self, engine_path="stockfish", parent=None):
         super().__init__(parent)
         self.engine_path = engine_path
+        self.engine_config = {
+            "threads": 1,
+            "hash": 16,
+            "multipv": 1,
+            "syzygy": "",
+        }
         self.setProcessChannelMode(QtCore.QProcess.MergedChannels)
-        self.setProgram(self.engine_path)
         self.readyReadStandardOutput.connect(self.read_data)
         self.analysis_data = {}
         self.current_analyzing_fen = None
@@ -35,7 +40,7 @@ class ChessEngine(QtCore.QProcess):
 
             if "uciok" in line:
                 self.send_command("isready")
-            
+
             if line.startswith("bestmove"):
                 match = re.search(r"bestmove\s+(\S+)", line)
                 if match:
@@ -44,7 +49,7 @@ class ChessEngine(QtCore.QProcess):
                     next_fen = self.next_analyzing_fen
                     next_mode = self.next_mode
                     next_opts = self.next_options
-                    
+
                     self.current_analyzing_fen = next_fen
                     self.next_analyzing_fen = None
                     self.searching = True
@@ -62,7 +67,7 @@ class ChessEngine(QtCore.QProcess):
         if depth_match:
             depth = int(depth_match.group(1))
             self.depthChanged.emit(depth)
-        
+
         # Extract MultiPV index
         multipv = 1
         multipv_match = re.search(r"multipv\s+(\d+)", line)
@@ -74,12 +79,7 @@ class ChessEngine(QtCore.QProcess):
         score_value = None
         cp_match = re.search(r"score cp (-?\d+)", line)
         mate_match = re.search(r"score mate (-?\d+)", line)
-        
-        # We need to know who is to move to normalize to White POV if the engine doesn't
-        # But UCI standard says score is relative to the side to move.
-        # However, many implementations (including python-chess) expect absolute (White POV).
-        # We'll normalize in the app or here if we have the board state.
-        
+
         if cp_match:
             score_type = "cp"
             score_value = int(cp_match.group(1))
@@ -100,19 +100,51 @@ class ChessEngine(QtCore.QProcess):
                 "score_type": score_type,
                 "score_value": score_value,
                 "pv": pv_moves,
-                "depth": depth if depth_match else None
+                "depth": depth if depth_match else None,
             }
             self.analysisUpdated.emit(info)
 
     def set_option(self, name: str, value: Any):
         self.send_command(f"setoption name {name} value {value}")
 
+    def ensure_started(self) -> bool:
+        """Start the engine process if it is not already running and configure UCI."""
+        if self.is_running():
+            return True
+
+        if not self.engine_path:
+            return False
+
+        self.setProgram(self.engine_path)
+        self.start()
+        if not self.waitForStarted(3000):
+            return False
+
+        self.send_command("uci")
+        if not self.waitForReadyRead(1000):
+            pass
+
+        self.set_option("Threads", self.engine_config.get("threads", 1))
+        self.set_option("Hash", self.engine_config.get("hash", 16))
+        self.set_option("MultiPV", self.engine_config.get("multipv", 1))
+
+        syzygy = self.engine_config.get("syzygy")
+        if syzygy:
+            self.set_option("SyzygyPath", syzygy)
+
+        self.send_command("isready")
+        return True
+
     def send_position(
         self, position: str, mode: Literal["depth", "time"] = "depth", options: dict = None
     ):
+        if not self.is_running():
+            if not self.ensure_started():
+                return
+
         if options is None:
             options = {"depth": 20}
-        
+
         if self.searching:
             self.next_analyzing_fen = position
             self.next_mode = mode
@@ -139,49 +171,35 @@ class ChessEngine(QtCore.QProcess):
         self.send_command("stop")
 
     def set_settings(self, settings: dict):
-        # settings keys: path, threads, hash, multipv, etc.
-        is_running = self.is_running()
-        if is_running:
+        """Update engine configuration. Restarts process only if it is already running."""
+        was_running = self.is_running()
+        if was_running:
             self.quit()
-        
-        self.searching = False
-        self.next_analyzing_fen = None
-        self.current_analyzing_fen = None
-        
-        self.engine_path = settings.get("path", self.engine_path)
-        self.setProgram(self.engine_path)
-        self.start()
-        if not self.waitForStarted(3000):
-            return
-            
-        self.send_command("uci")
-        if not self.waitForReadyRead(3000):
-            pass # Continue anyway
-            
-        self.set_option("Threads", settings.get("threads", 1))
-        self.set_option("Hash", settings.get("hash", 16))
-        self.set_option("MultiPV", settings.get("multipv", 1))
-        
-        # Syzygy
-        syzygy = settings.get("syzygy")
-        if syzygy:
-            self.set_option("SyzygyPath", syzygy)
 
-        self.send_command("isready")
+        self.engine_path = settings.get("path", self.engine_path)
+        self.engine_config.update(settings)
+
+        if was_running:
+            self.ensure_started()
 
     def send_command(self, command: str):
         if self.state() == QtCore.QProcess.Running:
             self.write(f"{command}\n".encode())
 
     def quit(self):
+        """Cleanly terminate the engine process and release all its resources."""
         self.searching = False
         self.next_analyzing_fen = None
         self.current_analyzing_fen = None
-        if self.state() == QtCore.QProcess.Running:
+        if self.state() != QtCore.QProcess.NotRunning:
             self.send_command("quit")
-            if not self.waitForFinished(2000):
+            if not self.waitForFinished(1000):
                 self.terminate()
+                if not self.waitForFinished(1000):
+                    self.kill()
+                    self.waitForFinished(500)
+        self.close()
 
     def is_running(self):
-        return self.state() == QtCore.QProcess.Running
+        return self.state() != QtCore.QProcess.NotRunning
 

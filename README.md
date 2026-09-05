@@ -23,10 +23,15 @@ A feature-rich, modern chess application built with Python, PyQt5, and Rust, fea
 - **Rich Context Management**: Create folders/subfolders, import/export PGNs, rename, delete, and open lines directly in the analysis editor.
 - **Seamless Edit Cycle**: Opening a repertoire routes its PGN to the `ChessApp` analyzer, where edits can be saved directly back to the database with a single keystroke (`Ctrl+Shift+R` or **File → Save Repertoire**).
 
-### ⚡ Blazing-Fast PGN Indexer (Rust Submodule)
-- Powered by a custom Rust CLI tool (`pgn-indexer`) leveraging memory mapping (`memmap2`) and SQLite bulk transactions.
-- Extracts game metadata and byte offsets (`offset`, `length`) directly from `.pgn` files into indexed SQLite sidecars (`.pgn.db`).
-- **Instant Seek & Load**: Open individual games instantly without re-parsing giant PGN files.
+### 🔍 High-Performance SCID & PGN Database Search (`scid-mgr`)
+- **Native SCID (.si4) and PGN Support**: High-performance Rust backend engine (`scid-mgr`) supporting both SCID binary database files (.si4, .sn4, .sg4) and large PGN archives.
+- **ChessBase-Style Multi-Tab Search Dialog**:
+  - 🏷️ **Game Info**: Filter by Players, Result, ECO, Date/Year, Event, Site, and Deleted status.
+  - ♟️ **Position / Board**: Interactive visual board editor and FEN pattern matcher.
+  - ⚖️ **Material**: Piece counts (White & Black) and endgame combinations (Rook, Queen, Minor pieces, Opposite-Colored Bishops, Queen Sacrifices).
+  - **Live Category Checkmarks & Auto-Activation**: Modifying any field automatically activates the category.
+  - **1-Click Board Search**: Search current board positions directly from the analysis editor with `Ctrl+F`.
+  - **Real-Time Progress Streaming**: Live search progress bar and match count reporting.
 
 ### 📜 Optimized `QPainter` PGN Browser
 - Custom viewport-based `QPainter` text layout engine designed for smooth performance on large annotated PGNs.
@@ -49,20 +54,20 @@ A feature-rich, modern chess application built with Python, PyQt5, and Rust, fea
 ### Prerequisites
 
 - Python 3.8+
-- [Rust & Cargo](https://rustup.rs/) (to compile the `pgn-indexer` binary)
+- [Rust & Cargo](https://rustup.rs/) (to compile the `scid-mgr` backend engine)
 - [Stockfish](https://stockfishchess.org/download/) (or any UCI-compatible engine) available on your system path.
 
 ### Setup
 
 1. Clone the repository with submodules:
    ```bash
-   git clone --recursive https://github.com/alexanderortizcuellar/qchess.git
+   git clone --recursive https://github.com/Alexanderortizcuellar/qchess.git
    cd qchess
    ```
 
-2. Build the Rust `pgn-indexer` binary:
+2. Build the Rust `scid-mgr` binary:
    ```bash
-   cd pgn-indexer
+   cd scid-mgr
    cargo build --release
    cd ..
    ```
@@ -85,22 +90,25 @@ python main.py
 - `main.py`: Root launcher.
 - `src/main.py`: Application bootstrapper and stylesheet initializer.
 - `src/gui/`: User interface components.
-  - `home_window.py`: Database browser landing page and dock manager.
+  - `home_window.py`: Database browser landing page, dock manager, and search dialog integration.
   - `app_controller.py`: Orchestrator managing two-window lifecycle and signal routing.
   - `app.py`: Main game editor and analysis window (`ChessApp`).
-  - `widgets/`: Reusable widgets (`repertoire_tree_widget.py`, `chessboard.py`, `painter_pgn_browser.py`, `game_list_table.py`, `eval_bar.py`, etc.).
+  - `widgets/`: Reusable widgets (`repertoire_tree_widget.py`, `chessboard.py`, `painter_pgn_browser.py`, `game_list_table.py`, `eval_bar.py`, `board_widget.py`, etc.).
+  - `dialogs/`: Modal dialogs (`advanced_search_dialog.py`, `settings_dlg.py`, `add_game_dialog.py`, etc.).
 - `src/core/`: Core logic modules.
+  - `scid_client.py`: Asynchronous JSON-RPC client communicating with the `scid-mgr` Rust backend.
   - `repertoire_db.py`: SQLite-backed repertoire repository (adjacency-list tree + PGN payload).
-  - `indexer.py`: Asynchronous `QProcess` runner for `pgn-indexer.exe`.
   - `move_manager.py`: Move tree navigation, SAN caching, and PGN state management.
   - `engine.py`: UCI Stockfish client.
   - `opening_explorer.py`: Opening explorer logic.
+- `scid-mgr/`: High-performance Rust SCID (v4/v5) and PGN database engine submodule.
 - `pgn-indexer/`: High-performance Rust PGN indexer submodule.
 
 ## Technical Stack
 
 - **GUI Framework**: PyQt5
-- **Indexing Engine**: Rust (`memmap2`, `rusqlite`)
-- **Database Backend**: SQLite (`sqlite3`)
-- **Chess Engine / Logic**: `python-chess`
-- **Icons & Theme**: QtAwesome, Custom QSS Stylesheet
+- **Database Backend**: Rust `scid-mgr` (Native SCID si4/si5 & PGN memory mapping, parallel filtering & sorting)
+- **Repertoire Storage**: SQLite (`sqlite3`)
+- **Chess Engine / Logic**: `python-chess`, UCI Stockfish
+- **Icons & Theme**: QtAwesome, Custom QSS Dark Theme
+

@@ -619,30 +619,41 @@ class GameAnalytics(QWidget):
             eval_match = re.search(r'\[%eval\s+([+-]?\d+(?:\.\d+)?|#?[+-]?\d+)\]', comment)
             if eval_match:
                 eval_str = eval_match.group(1)
-                if eval_str.startswith('#'):
-                    mate_val = int(eval_str[1:])
-                    eval_val = 15.0 if mate_val > 0 else -15.0
+                if '#' in eval_str:
+                    mate_str = eval_str.replace('#', '').strip()
+                    if mate_str in ("0", "+0", "-0", ""):
+                        if board.is_checkmate():
+                            eval_val = 15.0 if board.turn == chess.BLACK else -15.0
+                        else:
+                            eval_val = 15.0 if last_eval >= 0 else -15.0
+                    else:
+                        mate_val = int(mate_str)
+                        eval_val = 15.0 if mate_val > 0 else -15.0
                 else:
-                    eval_val = float(eval_str)
+                    try:
+                        eval_val = float(eval_str)
+                    except ValueError:
+                        eval_val = None
                     
             if eval_val is None:
-                eval_val = last_eval
+                if board.is_checkmate():
+                    eval_val = 15.0 if board.turn == chess.BLACK else -15.0
+                else:
+                    eval_val = last_eval
             else:
+                if board.is_checkmate():
+                    eval_val = 15.0 if board.turn == chess.BLACK else -15.0
                 last_eval = eval_val
             evals.append(eval_val)
             
             # Classification
             cls_val = None
-            if comment:
-                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', comment)
-                if alz_match:
-                    cls_tokens = alz_match.group(1).split()
-                    for token in cls_tokens:
-                        if token.startswith("cls="):
-                            try:
-                                cls_val = int(token.split("=")[1])
-                            except ValueError:
-                                pass
+            if hasattr(node, "nags") and node.nags:
+                from core.move_manager import NAG_TO_CLS
+                for nag in sorted(node.nags):
+                    if nag in NAG_TO_CLS:
+                        cls_val = NAG_TO_CLS[nag]
+                        break
             classifications.append(cls_val)
             
             # Clock / Time spent

@@ -7,6 +7,72 @@ from PyQt5.QtCore import QObject, pyqtSignal
 from core.pgn_to_html import flatten_nodes_pgn_order
 
 
+MOVE_EVAL_NAGS = {
+    1: "Good move (!)",
+    2: "Poor or mistake move (?)",
+    3: "Excellent or brilliant move (!!)",
+    4: "Blunder (??)",
+    5: "Interesting move (!?)",
+    6: "Dubious move (?!)",
+    9: "Miss",
+}
+
+POS_EVAL_NAGS = {
+    10: "Equal position (=)",
+    14: "White has a slight advantage (+=)",
+    15: "Black has a slight advantage (=+)",
+    16: "White has a moderate advantage (+/-)",
+    17: "Black has a moderate advantage (-/+)",
+    18: "White has a decisive advantage (+-)",
+    19: "Black has a decisive advantage (-+)",
+}
+
+NAG_MOVE_SYMBOLS = {
+    1: "!",
+    2: "?",
+    3: "!!",
+    4: "??",
+    5: "!?",
+    6: "?!",
+}
+
+NAG_POS_SYMBOLS = {
+    10: "=",
+    14: "+=",
+    15: "=+",
+    16: "+/-",
+    17: "-/+",
+    18: "+-",
+    19: "-+",
+}
+
+NAG_TO_CLS = {
+    1: 1,  # Great / Good (!)
+    2: 5,  # Mistake (?)
+    3: 7,  # Brilliant (!!)
+    4: 6,  # Blunder (??)
+    5: 2,  # Interesting (!?)
+    6: 4,  # Inaccuracy (?!)
+    9: 8,  # Miss
+}
+
+
+def format_san_with_nags(san: str, nags) -> str:
+    if not nags:
+        return san
+    move_suffix = ""
+    for n in sorted(nags):
+        if n in NAG_MOVE_SYMBOLS:
+            move_suffix = NAG_MOVE_SYMBOLS[n]
+            break
+    pos_suffix = ""
+    for n in sorted(nags):
+        if n in NAG_POS_SYMBOLS:
+            pos_suffix = f" {NAG_POS_SYMBOLS[n]}"
+            break
+    return f"{san}{move_suffix}{pos_suffix}"
+
+
 class MoveManager(QObject):
     pgnChanged = pyqtSignal(str)
     activeNodeChanged = pyqtSignal()
@@ -22,11 +88,25 @@ class MoveManager(QObject):
             self.update_pgn(pgn_str)
         self.current_node = self.game
 
+    def _auto_set_result(self):
+        """Auto-detect result if game is over / ended in checkmate and Result header is missing or '*'."""
+        res_header = self.game.headers.get("Result", "*")
+        if res_header in ("*", "?", "", None):
+            end_node = self.game
+            while end_node.variations:
+                end_node = end_node.variations[0]
+            board = end_node.board()
+            if board.is_checkmate():
+                self.game.headers["Result"] = board.result()
+            elif board.is_game_over():
+                self.game.headers["Result"] = board.result()
+
     def load_fen(self, fen: str):
         self.game = chess.pgn.Game()
         board = chess.Board(fen)
         self.game.setup(board)
         self.current_node = self.game
+        self._auto_set_result()
         self.create_mapping()
         self.is_dirty = True
 
@@ -50,6 +130,7 @@ class MoveManager(QObject):
         if game:
             self.game = game
             self.cache_node_metadata(self.game)
+            self._auto_set_result()
             self.current_node = self.game
             self.create_mapping()
             self.is_dirty = True
@@ -68,6 +149,7 @@ class MoveManager(QObject):
                 game = chess.pgn.read_game(f)
         self.game = game
         self.cache_node_metadata(self.game)
+        self._auto_set_result()
         self.current_node = self.game
         self.create_mapping()
         self.is_dirty = False
@@ -187,6 +269,8 @@ class MoveManager(QObject):
     def get_pgn(self):
         from datetime import date
         
+        self._auto_set_result()
+
         # Update headers if they are default or missing
         if self.game.headers.get("Event", "?") == "?":
             self.game.headers["Event"] = "Chess Analysis"
@@ -207,6 +291,56 @@ class MoveManager(QObject):
     def add_comment(self, index: int, comment: str):
         node = self.get_node_by_index(index)
         node.comment = comment
+        self.create_mapping()
+        self.is_dirty = True
+
+    def set_eval_annotation(self, index: int, eval_str: str):
+        """Add or update [%eval ...] tag in the node's comment."""
+        node = self.get_node_by_index(index)
+        if not node:
+            return
+        eval_clean = eval_str.replace("[%eval", "").replace("]", "").strip()
+        eval_tag = f"[%eval {eval_clean}]"
+        if node.comment:
+            if re.search(r'\[%eval\s+[^\]]+\]', node.comment):
+                node.comment = re.sub(r'\[%eval\s+[^\]]+\]', eval_tag, node.comment)
+            else:
+                node.comment = f"{node.comment.strip()} {eval_tag}".strip()
+        else:
+            node.comment = eval_tag
+        self.create_mapping()
+        self.is_dirty = True
+
+    def set_move_nag(self, index: int, nag: int):
+        node = self.get_node_by_index(index)
+        if not hasattr(node, "nags"):
+            node.nags = set()
+        if nag in node.nags:
+            node.nags.remove(nag)
+        else:
+            for m_nag in list(MOVE_EVAL_NAGS.keys()) + [9]:
+                node.nags.discard(m_nag)
+            node.nags.add(nag)
+        self.create_mapping()
+        self.is_dirty = True
+
+    def set_pos_nag(self, index: int, nag: int):
+        node = self.get_node_by_index(index)
+        if not hasattr(node, "nags"):
+            node.nags = set()
+        if nag in node.nags:
+            node.nags.remove(nag)
+        else:
+            for p_nag in POS_EVAL_NAGS.keys():
+                node.nags.discard(p_nag)
+            node.nags.add(nag)
+        self.create_mapping()
+        self.is_dirty = True
+
+    def clear_nags(self, index: int):
+        node = self.get_node_by_index(index)
+        if hasattr(node, "nags"):
+            node.nags.clear()
         self.create_mapping()
         self.is_dirty = True
 

@@ -115,10 +115,18 @@ class AnalysisWidget(QWidget):
 
     def on_checkbox_toggled(self, checked: bool):
         if checked:
-            self.lines_display.setPlaceholderText("")
+            self.show_starting_status()
         else:
-            self.lines_display.setPlaceholderText("Enable engine for analysis...")
+            self.clear()
         self.evaluationToggled.emit(checked)
+
+    def show_starting_status(self):
+        """Show 'Starting engine analysis...' status while waiting for the engine."""
+        self.analysis_lines.clear()
+        self.lines_display.clear()
+        self.lines_display.setPlaceholderText("Starting engine analysis...")
+        self.score_label.setText("...")
+        self.depth_label.setText("starting...")
 
     def render_html(self):
         if not self.analysis_lines:
@@ -248,8 +256,14 @@ class AnalysisWidget(QWidget):
         """Clear the current analysis lines data."""
         self.analysis_lines.clear()
         self.lines_display.clear()
-        self.score_label.setText("")
-        self.depth_label.setText("")
+        if self.check_analysis.isChecked():
+            self.lines_display.setPlaceholderText("Starting engine analysis...")
+            self.score_label.setText("...")
+            self.depth_label.setText("")
+        else:
+            self.lines_display.setPlaceholderText("Enable engine for analysis...")
+            self.score_label.setText("")
+            self.depth_label.setText("")
 
     def format_score(self, info: dict, raw=False, turn=None) -> str:
         import chess
@@ -274,6 +288,7 @@ class AnalysisWidget(QWidget):
         self.score_label.setText("0.00")
         self.depth_label.setText("depth 0")
         self.lines_display.clear()
+        self.lines_display.setPlaceholderText("Enable engine for analysis...")
         self.analysis_lines.clear()
 
 if __name__ == "__main__":

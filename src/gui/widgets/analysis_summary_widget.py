@@ -151,16 +151,12 @@ class AnalysisSummaryWidget(QWidget):
             turn = board.turn
             
             cls_val = None
-            if curr.comment:
-                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', curr.comment)
-                if alz_match:
-                    cls_tokens = alz_match.group(1).split()
-                    for token in cls_tokens:
-                        if token.startswith("cls="):
-                            try:
-                                cls_val = int(token.split("=")[1])
-                            except ValueError:
-                                pass
+            if hasattr(curr, "nags") and curr.nags:
+                from core.move_manager import NAG_TO_CLS
+                for nag in sorted(curr.nags):
+                    if nag in NAG_TO_CLS:
+                        cls_val = NAG_TO_CLS[nag]
+                        break
                                 
             if cls_val is not None:
                 player_key = "white" if turn == chess.WHITE else "black"

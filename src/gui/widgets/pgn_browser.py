@@ -87,21 +87,80 @@ class PGNBrowser(QTextBrowser):
             }
         """)
 
+        import qtawesome as qta
+
+        node_index = self.match_node(anchor)
+        current_nags = set()
+        if node_index is not None:
+            node = self.movemanager.get_node_by_index(node_index)
+            current_nags = getattr(node, "nags", set())
+
+        # --- Move Evaluation Submenu ---
+        if node_index is not None:
+            move_eval_menu = menu.addMenu("Move Evaluation")
+            move_eval_options = [
+                (1, "Good move (!)"),
+                (2, "Poor or mistake move (?)"),
+                (3, "Excellent or brilliant move (!!)"),
+                (4, "Blunder (??)"),
+                (5, "Interesting move (!?)"),
+                (6, "Dubious move (?!)"),
+                (9, "Miss"),
+            ]
+            for nag_id, label in move_eval_options:
+                act = QAction(label, self)
+                act.setCheckable(True)
+                act.setChecked(nag_id in current_nags)
+                act.triggered.connect(lambda checked, idx=node_index, n=nag_id: self.movemanager.set_move_nag(idx, n))
+                move_eval_menu.addAction(act)
+
+            # --- Position Evaluation Submenu ---
+            pos_eval_menu = menu.addMenu("Position Evaluation")
+            pos_eval_options = [
+                (10, "Equal position (=)"),
+                (14, "White has a slight advantage (+=)"),
+                (15, "Black has a slight advantage (=+)"),
+                (16, "White has a moderate advantage (+/-)"),
+                (17, "Black has a moderate advantage (-/+)"),
+                (18, "White has a decisive advantage (+-)"),
+                (19, "Black has a decisive advantage (-+)"),
+            ]
+            for nag_id, label in pos_eval_options:
+                act = QAction(label, self)
+                act.setCheckable(True)
+                act.setChecked(nag_id in current_nags)
+                act.triggered.connect(lambda checked, idx=node_index, n=nag_id: self.movemanager.set_pos_nag(idx, n))
+                pos_eval_menu.addAction(act)
+
+            clear_eval_act = QAction("Clear Evaluation", self)
+            clear_eval_act.triggered.connect(lambda checked, idx=node_index: self.movemanager.clear_nags(idx))
+            menu.addAction(clear_eval_act)
+
+            # --- Add Engine Evaluation (only when engine is enabled) ---
+            if self.is_engine_enabled():
+                eval_score = self.get_current_engine_eval()
+                eval_label = f"Add Eval ({eval_score})" if eval_score else "Add Eval"
+                add_eval_act = QAction(qta.icon("fa5s.chart-line", color="#a9aea7"), eval_label, self)
+                add_eval_act.triggered.connect(lambda checked, idx=node_index: self.on_add_eval(idx))
+                menu.addAction(add_eval_act)
+
+            menu.addSeparator()
+
         actions = [
+            ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
+            (None, None, None),  # Separator
             ("Promote to Main Line", self.on_promote_to_main, "fa5s.arrow-up"),
             ("Promote Move", self.on_promote, "fa5s.chevron-up"),
             ("Demote Move", self.on_demote, "fa5s.chevron-down"),
             ("Delete from Here", self.on_delete, "fa5s.trash-alt"),
-            (None, None, None),  # Separator
-            ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
         ]
 
         for name, func, icon_name in actions:
             if name is None:
                 menu.addSeparator()
             else:
-                icon = qta.icon(icon_name)
-                act = QAction(icon, name, self)
+                icon = qta.icon(icon_name) if icon_name else None
+                act = QAction(icon, name, self) if icon else QAction(name, self)
                 act.triggered.connect(lambda checked, f=func: f(anchor))
                 menu.addAction(act)
 
@@ -145,6 +204,23 @@ class PGNBrowser(QTextBrowser):
             except ValueError:
                 return None
         return None
+
+    def is_engine_enabled(self) -> bool:
+        app = self.window()
+        if hasattr(app, "analysis_widget") and hasattr(app.analysis_widget, "check_analysis"):
+            return app.analysis_widget.check_analysis.isChecked()
+        return False
+
+    def get_current_engine_eval(self) -> str | None:
+        app = self.window()
+        if hasattr(app, "get_current_engine_eval"):
+            return app.get_current_engine_eval()
+        return None
+
+    def on_add_eval(self, node_index: int):
+        eval_score = self.get_current_engine_eval()
+        if eval_score:
+            self.movemanager.set_eval_annotation(node_index, eval_score)
 
     def on_anchor_clicked(self, url: QUrl):
         match = re.match(r"move\((\d+)\)", url.toString())

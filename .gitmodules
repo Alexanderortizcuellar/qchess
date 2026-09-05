@@ -4,3 +4,6 @@
 [submodule "pgn-indexer"]
 	path = pgn-indexer
 	url = https://github.com/alexanderortizcuellar/pgn-indexer.git
+[submodule "scid-mgr"]
+	path = scid-mgr
+	url = https://github.com/Alexanderortizcuellar/scid-mgr.git

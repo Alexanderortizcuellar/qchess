@@ -22,7 +22,10 @@ class SettingsDialog(QDialog):
         board_form = QFormLayout(board_group)
         
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["Classic", "Lichess", "Chess.com", "Blue", "Wood"])
+        self.theme_combo.addItems([
+            "Classic", "Lichess", "Chess.com", "Blue", "Wood", 
+            "Cerezo", "Nogal", "Leather", "Classic Green", "Marble"
+        ])
         board_form.addRow("Theme:", self.theme_combo)
         
         self.premoves_cb = QCheckBox("Enable Premoves")
@@ -58,6 +61,8 @@ class SettingsDialog(QDialog):
         # --- PGN Browser Settings ---
         browser_group = QGroupBox("PGN Browser Settings")
         browser_form = QFormLayout(browser_group)
+        self.show_nags_cb = QCheckBox("Show NAGs")
+        browser_form.addRow(self.show_nags_cb)
         self.show_eval_cb = QCheckBox("Show Engine Evaluations inline")
         browser_form.addRow(self.show_eval_cb)
         self.show_classifications_cb = QCheckBox("Show Move Classification colors")
@@ -109,6 +114,9 @@ class SettingsDialog(QDialog):
         use_figurine = self.settings.value("use_figurine_font", True, type=bool)
         self.figurine_font_cb.setChecked(use_figurine)
 
+        show_nags = self.settings.value("show_nags", True, type=bool)
+        self.show_nags_cb.setChecked(show_nags)
+
         show_eval = self.settings.value("show_eval_annotations", True, type=bool)
         self.show_eval_cb.setChecked(show_eval)
 
@@ -135,6 +143,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
+        self.settings.setValue("show_nags", self.show_nags_cb.isChecked())
         self.settings.setValue("show_eval_annotations", self.show_eval_cb.isChecked())
         self.settings.setValue("show_move_classifications", self.show_classifications_cb.isChecked())
         self.settings.setValue("show_variations", self.show_variations_cb.isChecked())
@@ -149,6 +158,7 @@ class SettingsDialog(QDialog):
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
             "use_figurine_font": self.figurine_font_cb.isChecked(),
+            "show_nags": self.show_nags_cb.isChecked(),
             "show_eval_annotations": self.show_eval_cb.isChecked(),
             "show_move_classifications": self.show_classifications_cb.isChecked(),
             "show_variations": self.show_variations_cb.isChecked(),

@@ -1,386 +1,312 @@
-import sqlite3
-import re
-from typing import Dict
-
+from typing import Optional, Dict, Any, Set
 from PyQt5 import QtCore, QtWidgets, QtGui
+from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
+from PyQt5.QtGui import QColor, QFont
+from core.scid_client import ScidClient
 
 
-def format_int_eco(eco_val) -> str:
-    if eco_val is None:
-        return "??"
-    try:
-        code = int(eco_val)
-        if code < 0 or code >= 500:
-            return "??"
-        letter = chr(ord('A') + (code // 100))
-        num = code % 100
-        return f"{letter}{num:02d}"
-    except Exception:
-        return "??"
-
-
-def get_eco_filter_sql(filter_text: str):
+class GameListTableModel(QAbstractTableModel):
     """
-    Returns (sql_condition_str, params_list) or None if it doesn't match an ECO pattern.
-    """
-    text = filter_text.strip().upper()
-    # Match full ECO code: e.g. "B12"
-    if re.match(r"^[A-E]\d{2}$", text):
-        letter = text[0]
-        num = int(text[1:3])
-        code = (ord(letter) - ord('A')) * 100 + num
-        return "g.eco = ?", [code]
-    # Match partial ECO prefix: e.g. "B1" (matches B10-B19)
-    elif re.match(r"^[A-E]\d$", text):
-        letter = text[0]
-        digit = int(text[1])
-        start_code = (ord(letter) - ord('A')) * 100 + digit * 10
-        end_code = start_code + 9
-        return "g.eco BETWEEN ? AND ?", [start_code, end_code]
-    # Match single letter ECO prefix: e.g. "B" (matches B00-B99)
-    elif re.match(r"^[A-E]$", text):
-        letter = text[0]
-        start_code = (ord(letter) - ord('A')) * 100
-        end_code = start_code + 99
-        return "g.eco BETWEEN ? AND ?", [start_code, end_code]
-
-    return None
-
-
-RESULT_MAP = {
-    0: "*",
-    1: "0-1",
-    2: "1/2-1/2",
-    3: "1-0",
-}
-
-
-def format_int_result(res_val) -> str:
-    if res_val is None:
-        return "*"
-    try:
-        return RESULT_MAP.get(int(res_val), "*")
-    except Exception:
-        return "*"
-
-
-def format_int_date(date_val) -> str:
-    if date_val is None:
-        return "????.??.??"
-    try:
-        date_int = int(date_val)
-        if date_int <= 0:
-            return "????.??.??"
-
-        # Extract components
-        year = date_int // 10000
-        month = (date_int % 10000) // 100
-        day = date_int % 100
-
-        year_str = f"{year:04d}" if year > 0 else "????"
-        month_str = f"{month:02d}" if month > 0 else "??"
-        day_str = f"{day:02d}" if day > 0 else "??"
-
-        return f"{year_str}.{month_str}.{day_str}"
-    except Exception:
-        return "????.??.??"
-
-
-class GameListTableModel(QtCore.QAbstractTableModel):
-    """
-    Read-only table model that fetches rows on-demand from a SQLite PGN index.
-    Includes a sliding-window cache for seamless virtualized scrolling.
+    Pure virtual scrolling table model powered by scid-mgr backend.
+    data() only reads from in-memory cache chunks (100 rows each) and NEVER blocks UI.
     """
 
     HEADERS = [
-        "Event",
-        "Site",
-        "Date",
-        "Round",
+        "ID",
         "White",
-        "Black",
         "EloW",
+        "Black",
         "EloB",
         "Result",
         "ECO",
-        "Move Count",
-        "Moves",
+        "Date",
+        "Event",
+        "Site",
+        "Round",
+        "Status",
     ]
 
-    COLUMNS_MAP = {
-        "Event": "e.name",
-        "Site": "s.name",
-        "Date": "g.date",
-        "Round": "g.round",
-        "White": "pw.name",
-        "Black": "pb.name",
-        "EloW": "g.white_elo",
-        "EloB": "g.black_elo",
-        "Result": "g.result",
-        "ECO": "g.eco",
-        "Move Count": "g.num_moves",
-        "Moves": "g.id",
+    COLUMN_SORT_FIELDS = {
+        0: "id",
+        1: "white",
+        2: "white_elo",
+        3: "black",
+        4: "black_elo",
+        5: "result",
+        6: "eco",
+        7: "date",
+        8: "event",
+        9: "site",
+        10: "round",
     }
 
-    def __init__(self, parent=None):
+    CHUNK_SIZE = 100
+    stats_updated = pyqtSignal(int, int)  # total_games, loaded_games
+
+    def __init__(self, client: Optional[ScidClient] = None, parent=None):
         super().__init__(parent)
-        self.conn = None
-        self.total_rows = 0
-        self.pgn_path = None
+        self.client = client
+        self.total_count = 0
+        self.filters: Dict[str, Any] = {}
+        self.cached_chunks: Dict[int, list] = {}
+        self.in_flight_pages: Set[int] = set()
+        self.sort_col: Optional[int] = None
+        self.sort_asc: bool = True
 
-        self.filter_text = ""
-        self.sort_column = "g.id"
-        self.sort_order = "ASC"
+        if self.client:
+            self.client.response_received.connect(self.on_backend_response)
 
-        self._cache = {}
-        self._cache_start = -1
-        self._cache_size = 200
+    def set_client(self, client: ScidClient):
+        if self.client and self.client != client:
+            try:
+                self.client.response_received.disconnect(self.on_backend_response)
+            except Exception:
+                pass
+        self.client = client
+        if self.client:
+            self.client.response_received.connect(self.on_backend_response)
 
-        self._lazy_load_timer = QtCore.QTimer()
-        self._lazy_load_timer.setSingleShot(True)
-        self._lazy_load_timer.timeout.connect(self._on_lazy_load_timeout)
-        self._pending_load_row = -1
-
-    def set_db(self, conn, total_rows, pgn_path):
+    def set_db(self, total_count: int, filters: Optional[dict] = None):
         self.beginResetModel()
-        self.conn = conn
-        self.total_rows = total_rows
-        self.pgn_path = pgn_path
-
-        self.filter_text = ""
-        self.sort_column = "g.id"
-        self.sort_order = "ASC"
-
-        self._cache.clear()
-        self._cache_start = -1
+        self.total_count = total_count
+        self.filters = dict(filters) if filters else {}
+        self.cached_chunks.clear()
+        self.in_flight_pages.clear()
         self.endResetModel()
 
-    def set_filter(self, filter_text: str):
-        self.beginResetModel()
-        self.filter_text = filter_text.strip()
-        self._cache.clear()
-        self._cache_start = -1
+        if self.client and self.client.is_running() and total_count > 0:
+            self._request_chunk(0)
 
-        if not self.conn:
-            self.total_rows = 0
-            self.endResetModel()
-            return
+    def rowCount(self, parent=QModelIndex()) -> int:
+        return 0 if parent.isValid() else self.total_count
 
-        cursor = self.conn.cursor()
-        if self.filter_text:
-            like_pat = f"%{self.filter_text}%"
-            eco_res = get_eco_filter_sql(self.filter_text)
-            if eco_res:
-                eco_cond, eco_params = eco_res
-            else:
-                eco_cond, eco_params = "g.eco = -2", []
-
-            cursor.execute(
-                f"""
-                SELECT COUNT(*) FROM games g
-                LEFT JOIN players pw ON g.white_id = pw.id
-                LEFT JOIN players pb ON g.black_id = pb.id
-                LEFT JOIN events e ON g.event_id = e.id
-                LEFT JOIN sites s ON g.site_id = s.id
-                WHERE pw.name LIKE ? OR pb.name LIKE ? OR e.name LIKE ? OR s.name LIKE ? OR {eco_cond}
-                """,
-                [like_pat, like_pat, like_pat, like_pat] + eco_params,
-            )
-            self.total_rows = cursor.fetchone()[0]
-        else:
-            cursor.execute("SELECT COUNT(*) FROM games")
-            self.total_rows = cursor.fetchone()[0]
-
-        self.endResetModel()
-
-    def sort(self, col: int, order: QtCore.Qt.SortOrder):
-        self.beginResetModel()
-        col_name = self.HEADERS[col]
-        self.sort_column = self.COLUMNS_MAP.get(col_name, "g.id")
-        self.sort_order = "DESC" if order == QtCore.Qt.DescendingOrder else "ASC"
-
-        self._cache.clear()
-        self._cache_start = -1
-        self.endResetModel()
-
-    def rowCount(self, parent=QtCore.QModelIndex()) -> int:
-        return 0 if parent.isValid() else self.total_rows
-
-    def columnCount(self, parent=QtCore.QModelIndex()) -> int:
+    def columnCount(self, parent=QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self.HEADERS)
 
-    def data(self, index: QtCore.QModelIndex, role=QtCore.Qt.DisplayRole):
-        if not index.isValid() or not self.conn:
+    def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            title = self.HEADERS[section]
+            if self.sort_col == section:
+                title += " ▲" if self.sort_asc else " ▼"
+            return title
+        if orientation == Qt.Vertical and role == Qt.DisplayRole:
+            return str(section + 1)
+        return None
+
+    def toggle_sort_column(self, col: int, order: Optional[Qt.SortOrder] = None):
+        if col not in self.COLUMN_SORT_FIELDS:
+            return
+        
+        if order is not None:
+            self.sort_col = col
+            self.sort_asc = (order == Qt.AscendingOrder)
+        else:
+            if self.sort_col == col:
+                self.sort_asc = not self.sort_asc
+            else:
+                self.sort_col = col
+                self.sort_asc = True
+
+        self.filters["sort_by"] = self.COLUMN_SORT_FIELDS[col]
+        self.filters["sort_asc"] = self.sort_asc
+        self.filters["sort_direction"] = "ASC" if self.sort_asc else "DESC"
+        self.headerDataChanged.emit(Qt.Horizontal, 0, len(self.HEADERS) - 1)
+        self.invalidate_cache_and_reload()
+
+    def data(self, index: QModelIndex, role=Qt.DisplayRole):
+        if not index.isValid():
             return None
 
         row = index.row()
         col = index.column()
+        page = row // self.CHUNK_SIZE
+        offset_in_page = row % self.CHUNK_SIZE
 
-        if role == QtCore.Qt.FontRole:
+        chunk = self.cached_chunks.get(page)
+        game_item = chunk[offset_in_page] if (chunk and offset_in_page < len(chunk)) else None
+
+        # Lazy load chunk if missing
+        if game_item is None and page not in self.in_flight_pages and self.client and self.client.is_running():
+            self._request_chunk(page)
+
+        if role == Qt.DisplayRole:
+            if game_item:
+                return self._format_cell(game_item, col)
+            return ""
+
+        if role == Qt.FontRole:
             col_name = self.HEADERS[col]
-            font = QtGui.QFont("Segoe UI", 10)
+            font = QFont("Segoe UI", 9)
             if col_name in ("White", "Black", "Result"):
                 font.setBold(True)
             return font
 
-        if role == QtCore.Qt.TextAlignmentRole:
+        if role == Qt.TextAlignmentRole:
             col_name = self.HEADERS[col]
-            if col_name in ("EloW", "EloB", "Result", "Date", "Round", "ECO", "Move Count"):
-                return QtCore.Qt.AlignCenter
+            if col_name in ("ID", "EloW", "EloB", "Result", "Date", "Round", "ECO", "Status"):
+                return Qt.AlignCenter
 
-        if role in (QtCore.Qt.DisplayRole, QtCore.Qt.EditRole):
-            # Fetch cache block if requested index is outside the sliding window
-            if not (self._cache_start <= row < self._cache_start + len(self._cache)):
-                self._pending_load_row = row
-                self._lazy_load_timer.start(80)  # 80ms debounce
-                return None
-
-            row_data = self._cache.get(row)
-            if not row_data:
-                return None
-
-            col_name = self.HEADERS[col]
-            if col_name == "Event":
-                return row_data[8]
-            elif col_name == "Site":
-                return row_data[9]
-            elif col_name == "Date":
-                return format_int_date(row_data[7])
-            elif col_name == "Round":
-                return row_data[10] if row_data[10] is not None else "-"
-            elif col_name == "White":
-                return row_data[1]
-            elif col_name == "Black":
-                return row_data[2]
-            elif col_name == "EloW":
-                return str(row_data[4]) if row_data[4] is not None else ""
-            elif col_name == "EloB":
-                return str(row_data[5]) if row_data[5] is not None else ""
-            elif col_name == "Result":
-                return format_int_result(row_data[3])
-            elif col_name == "ECO":
-                return format_int_eco(row_data[6])
-            elif col_name == "Move Count":
-                return str(row_data[13]) if row_data[13] is not None else "0"
-            elif col_name == "Moves":
-                return ""
+        if role == Qt.ForegroundRole and game_item:
+            if game_item.get("deleted"):
+                return QColor("#d32f2f")  # Red for deleted games
 
         return None
 
-    def _load_cache_slice(self, center_row):
-        if not self.conn:
+    def _format_cell(self, g: dict, col: int) -> str:
+        if col == 0:
+            gid = g.get("id")
+            return str(gid + 1) if gid is not None else ""
+        elif col == 1:
+            return g.get("white", "")
+        elif col == 2:
+            elo = g.get("white_elo")
+            return str(elo) if elo and elo > 0 else ""
+        elif col == 3:
+            return g.get("black", "")
+        elif col == 4:
+            elo = g.get("black_elo")
+            return str(elo) if elo and elo > 0 else ""
+        elif col == 5:
+            return g.get("result", "*")
+        elif col == 6:
+            return g.get("eco", "")
+        elif col == 7:
+            return g.get("date", "????.??.??")
+        elif col == 8:
+            return g.get("event", "")
+        elif col == 9:
+            return g.get("site", "")
+        elif col == 10:
+            r = g.get("round")
+            return str(r) if r is not None else "-"
+        elif col == 11:
+            status_flags = []
+            if g.get("deleted"):
+                status_flags.append("DELETED")
+            if g.get("non_standard_start"):
+                status_flags.append("FEN")
+            return " | ".join(status_flags) if status_flags else "OK"
+        return ""
+
+    def get_game_at(self, row: int) -> Optional[dict]:
+        page = row // self.CHUNK_SIZE
+        offset = row % self.CHUNK_SIZE
+        chunk = self.cached_chunks.get(page)
+        if chunk and offset < len(chunk):
+            return chunk[offset]
+        return None
+
+    def _request_chunk(self, page: int):
+        if page in self.in_flight_pages or not self.client or not self.client.is_running():
             return
-
-        start = max(0, center_row - self._cache_size // 2)
-        cursor = self.conn.cursor()
-
-        query_base = (
-            "SELECT g.id, pw.name AS white, pb.name AS black, g.result, g.white_elo, g.black_elo, g.eco, g.date, e.name AS event, s.name AS site, g.round, g.offset, g.length, g.num_moves "
-            "FROM games g "
-            "LEFT JOIN players pw ON g.white_id = pw.id "
-            "LEFT JOIN players pb ON g.black_id = pb.id "
-            "LEFT JOIN events e ON g.event_id = e.id "
-            "LEFT JOIN sites s ON g.site_id = s.id "
+        self.in_flight_pages.add(page)
+        self.client.query_games(
+            page=page,
+            page_size=self.CHUNK_SIZE,
+            filter_dict=self.filters,
+            sort_by=self.filters.get("sort_by"),
+            sort_direction=self.filters.get("sort_direction"),
         )
 
-        if self.filter_text:
-            like_pat = f"%{self.filter_text}%"
-            eco_res = get_eco_filter_sql(self.filter_text)
-            if eco_res:
-                eco_cond, eco_params = eco_res
-            else:
-                eco_cond, eco_params = "g.eco = -2", []
+    def set_filters(self, filters: dict):
+        self.beginResetModel()
+        self.filters = dict(filters)
+        self.cached_chunks.clear()
+        self.in_flight_pages.clear()
+        self.endResetModel()
 
-            query = (
-                f"{query_base} WHERE pw.name LIKE ? OR pb.name LIKE ? OR e.name LIKE ? OR s.name LIKE ? OR {eco_cond} "
-                f"ORDER BY {self.sort_column} {self.sort_order} LIMIT ? OFFSET ?"
-            )
-            cursor.execute(
-                query,
-                [like_pat, like_pat, like_pat, like_pat] + eco_params + [self._cache_size, start],
-            )
+        if self.client and self.client.is_running():
+            self._request_chunk(0)
+
+    def invalidate_cache_and_reload(self):
+        self.beginResetModel()
+        self.cached_chunks.clear()
+        self.in_flight_pages.clear()
+        self.endResetModel()
+
+        if self.client and self.client.is_running():
+            self._request_chunk(0)
+
+    def clear(self):
+        self.beginResetModel()
+        self.cached_chunks.clear()
+        self.in_flight_pages.clear()
+        self.total_count = 0
+        self.endResetModel()
+        self.stats_updated.emit(0, 0)
+
+    def on_backend_response(self, data: dict):
+        if data.get("status") != "ok":
+            return
+        resp_data = data.get("data", {})
+        if "games" not in resp_data:
+            return
+
+        page = resp_data.get("page", 0)
+        total = resp_data.get("total", 0)
+        games = resp_data.get("games", [])
+
+        if page in self.in_flight_pages:
+            self.in_flight_pages.remove(page)
+
+        self.cached_chunks[page] = games
+
+        if total != self.total_count:
+            self.beginResetModel()
+            self.total_count = total
+            self.endResetModel()
         else:
-            query = f"{query_base} ORDER BY {self.sort_column} {self.sort_order} LIMIT ? OFFSET ?"
-            cursor.execute(query, (self._cache_size, start))
+            start_row = page * self.CHUNK_SIZE
+            end_row = min(self.total_count - 1, start_row + len(games) - 1)
+            if start_row <= end_row:
+                top_left = self.index(start_row, 0)
+                bottom_right = self.index(end_row, len(self.HEADERS) - 1)
+                self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole, Qt.ForegroundRole])
 
-        rows = cursor.fetchall()
-        self._cache.clear()
-        for idx, r in enumerate(rows):
-            self._cache[start + idx] = r
-        self._cache_start = start
+        loaded_count = sum(len(c) for c in self.cached_chunks.values())
+        self.stats_updated.emit(self.total_count, loaded_count)
 
-    def _on_lazy_load_timeout(self):
-        if self._pending_load_row != -1:
-            row = self._pending_load_row
-            self._pending_load_row = -1
-            self._load_cache_slice(row)
-            self.layoutChanged.emit()
-
-    def headerData(
-        self,
-        section: int,
-        orientation: QtCore.Qt.Orientation,
-        role=QtCore.Qt.DisplayRole,
-    ):
-        if role != QtCore.Qt.DisplayRole:
-            return None
-        if orientation == QtCore.Qt.Horizontal:
-            return self.HEADERS[section]
-        return section + 1
-
-    def flags(self, index: QtCore.QModelIndex):
-        if not index.isValid():
-            return QtCore.Qt.NoItemFlags
-        return QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
-
-    def row_dict(self, row_idx: int) -> Dict[str, str]:
-        if not (self._cache_start <= row_idx < self._cache_start + len(self._cache)):
-            self._load_cache_slice(row_idx)
-
-        row_data = self._cache.get(row_idx)
-        if not row_data:
-            return {}
-
-        return {
-            "Event": row_data[8],
-            "Site": row_data[9],
-            "Date": format_int_date(row_data[7]),
-            "Round": row_data[10] if row_data[10] is not None else "-",
-            "White": row_data[1],
-            "Black": row_data[2],
-            "EloW": str(row_data[4]) if row_data[4] is not None else "",
-            "EloB": str(row_data[5]) if row_data[5] is not None else "",
-            "Result": format_int_result(row_data[3]),
-            "ECO": format_int_eco(row_data[6]),
-            "Move Count": str(row_data[13]) if row_data[13] is not None else "0",
-            "_offset": row_data[11],
-            "_length": row_data[12],
-            "_pgn_path": self.pgn_path,
-        }
+    def set_game_deleted_status(self, row: int, deleted: bool):
+        page = row // self.CHUNK_SIZE
+        offset = row % self.CHUNK_SIZE
+        chunk = self.cached_chunks.get(page)
+        if chunk and offset < len(chunk):
+            chunk[offset]["deleted"] = deleted
+            top_left = self.index(row, 0)
+            bottom_right = self.index(row, len(self.HEADERS) - 1)
+            self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole, Qt.ForegroundRole])
 
 
 class GameListTableWidget(QtWidgets.QWidget):
     """
-    Results table widget utilizing SQLite lazy-loading.
-    Double-clicking a game offsets/reads from the PGN file on-demand.
+    Virtual scrolling games table widget powered by scid-mgr backend.
     """
 
     gameSelected = QtCore.pyqtSignal(dict)
     loadFinished = QtCore.pyqtSignal(int)
+    gameDeleted = QtCore.pyqtSignal(int)
+    gameUndeleted = QtCore.pyqtSignal(int)
 
-    def __init__(self, parent=None):
+    def __init__(self, client: Optional[ScidClient] = None, parent=None):
         super().__init__(parent)
-        self.conn = None
+        self.client = client
 
         self.filter_edit = QtWidgets.QLineEdit(self)
-        self.filter_edit.setPlaceholderText("Filter games instantly...")
+        self.filter_edit.setPlaceholderText("Quick filter games by player or text (Press Enter)...")
 
         self.table = QtWidgets.QTableView(self)
-        self.table.setFont(QtGui.QFont("Segoe UI", 10))
+        self.table.setFont(QtGui.QFont("Segoe UI", 9))
+        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.verticalHeader().setMinimumSectionSize(18)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(True)
+        self.table.setStyleSheet("QTableView::item { padding: 1px 4px; }")
+
+        # Table row context menu
+        self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
 
         self.info_label = QtWidgets.QLabel(self)
 
@@ -390,12 +316,10 @@ class GameListTableWidget(QtWidgets.QWidget):
         layout.addWidget(self.table, 1)
         layout.addWidget(self.info_label)
 
-        self.model = GameListTableModel(self)
+        self.model = GameListTableModel(self.client, self)
         self.table.setModel(self.model)
 
-        self._hide_moves_column()
-
-        # Reordering and layout persistence setup
+        # Header configuration
         header = self.table.horizontalHeader()
         header.setSectionsMovable(True)
         header.sectionMoved.connect(self.save_header_state)
@@ -403,144 +327,206 @@ class GameListTableWidget(QtWidgets.QWidget):
         header.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(self._on_header_context_menu)
 
-        self.filter_edit.textChanged.connect(self._on_filter_text_changed)
+        self.restore_header_state()
+
+        self.filter_edit.returnPressed.connect(self._on_quick_filter_applied)
         self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
 
-    def load_db(self, db_path: str, pgn_path: str):
-        """Connect to indexed SQLite database and load model."""
-        if self.conn:
-            self.conn.close()
+    def keyPressEvent(self, event: QtGui.QKeyEvent):
+        if event.key() == QtCore.Qt.Key_Delete:
+            self.delete_selected_game()
+        else:
+            super().keyPressEvent(event)
 
-        self.conn = sqlite3.connect(db_path)
+    def get_selected_row_and_game(self) -> tuple[Optional[int], Optional[dict]]:
+        sel = self.table.selectionModel()
+        if not sel or not sel.hasSelection():
+            return None, None
+        indexes = sel.selectedRows()
+        if not indexes:
+            return None, None
+        row = indexes[0].row()
+        return row, self.model.get_game_at(row)
 
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM games")
-        total_rows = cursor.fetchone()[0]
+    def _on_table_context_menu(self, pos: QtCore.QPoint):
+        row, game_item = self.get_selected_row_and_game()
+        if row is None or not game_item:
+            return
 
-        self.model.set_db(self.conn, total_rows, pgn_path)
+        import qtawesome as qta
+        menu = QtWidgets.QMenu(self)
 
-        # Restore header state (widths, reordering, hidden state)
+        open_act = menu.addAction(qta.icon("fa5s.chess-board", color="#a9aea7"), "Open Game in Analyzer")
+        open_act.triggered.connect(lambda: self._on_double_clicked(self.model.index(row, 0)))
+
+        copy_act = menu.addAction(qta.icon("fa5s.copy", color="#a9aea7"), "Copy PGN")
+        copy_act.triggered.connect(self.copy_selected_game_pgn)
+
+        menu.addSeparator()
+
+        is_del = game_item.get("deleted", False)
+        if is_del:
+            undel_act = menu.addAction(qta.icon("fa5s.undo", color="#4ade80"), "Undelete Game")
+            undel_act.triggered.connect(self.undelete_selected_game)
+        else:
+            del_act = menu.addAction(qta.icon("fa5s.trash-alt", color="#f87171"), "Delete Game")
+            del_act.triggered.connect(self.delete_selected_game)
+
+        menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def copy_selected_game_pgn(self):
+        row, game_item = self.get_selected_row_and_game()
+        if row is None or not game_item or not self.client or not self.client.is_running():
+            return
+        game_id = game_item.get("id", row)
+
+        def on_pgn(resp: dict):
+            if resp.get("status") == "ok":
+                pgn_text = resp.get("data", {}).get("pgn", "")
+                QtWidgets.QApplication.clipboard().setText(pgn_text)
+
+        self.client.get_pgn(int(game_id), callback=on_pgn)
+
+    def delete_selected_game(self):
+        row, game_item = self.get_selected_row_and_game()
+        if row is None or not game_item or not self.client or not self.client.is_running():
+            return
+        game_id = game_item.get("id", row)
+
+        def on_del(resp: dict):
+            if resp.get("status") == "ok":
+                self.model.set_game_deleted_status(row, True)
+                self.client.save_database()
+                self.gameDeleted.emit(int(game_id))
+
+        self.client.delete_game(int(game_id), callback=on_del)
+
+    def undelete_selected_game(self):
+        row, game_item = self.get_selected_row_and_game()
+        if row is None or not game_item or not self.client or not self.client.is_running():
+            return
+        game_id = game_item.get("id", row)
+
+        def on_undel(resp: dict):
+            if resp.get("status") == "ok":
+                self.model.set_game_deleted_status(row, False)
+                self.client.save_database()
+                self.gameUndeleted.emit(int(game_id))
+
+        self.client.undelete_game(int(game_id), callback=on_undel)
+
+    def set_client(self, client: ScidClient):
+        self.client = client
+        self.model.set_client(client)
+
+    def load_database(self, total_games: int, filter_dict: Optional[dict] = None):
+        """Load games into the virtual table model."""
+        self.model.set_db(total_games, filter_dict)
         self.restore_header_state()
-
-        self.loadFinished.emit(total_rows)
+        self.loadFinished.emit(total_games)
 
     def clear(self):
-        """Clears connection and table rows."""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
-        self.model.set_db(None, 0, None)
+        self.model.clear()
         self.set_info_text("")
 
     def set_info_text(self, text: str):
         self.info_label.setText(str(text))
 
-    def _hide_moves_column(self):
-        try:
-            moves_col = GameListTableModel.HEADERS.index("Moves")
-            self.table.setColumnHidden(moves_col, True)
-        except ValueError:
-            pass
-
-    def _on_filter_text_changed(self, text: str):
-        self.model.set_filter(text)
-        self.set_info_text(f"Filtered: {self.model.total_rows} matches")
+    def _on_quick_filter_applied(self):
+        text = self.filter_edit.text().strip()
+        f = dict(self.model.filters)
+        if text:
+            f["player"] = text
+        else:
+            f.pop("player", None)
+        self.model.set_filters(f)
 
     def _on_header_clicked(self, logical_index: int):
         order = self.table.horizontalHeader().sortIndicatorOrder()
-        self.model.sort(logical_index, order)
+        self.model.toggle_sort_column(logical_index, order)
 
     def _on_double_clicked(self, proxy_index: QtCore.QModelIndex):
-        if not proxy_index.isValid():
+        if not proxy_index.isValid() or not self.client or not self.client.is_running():
             return
 
         row_idx = proxy_index.row()
-        row_data = self.model.row_dict(row_idx)
-        if not row_data:
-            return
+        game_item = self.model.get_game_at(row_idx) or {}
+        game_id = game_item.get("id", row_idx)
+        if game_id is None:
+            game_id = row_idx
 
-        offset = row_data.get("_offset")
-        length = row_data.get("_length")
-        pgn_path = row_data.get("_pgn_path")
+        def on_pgn_received(resp: dict):
+            if resp.get("status") == "ok":
+                pgn_text = resp.get("data", {}).get("pgn", "")
+                display_id = game_item.get("id", game_id)
+                if isinstance(display_id, int):
+                    display_id = display_id + 1
+                payload = {
+                    "ID": str(display_id),
+                    "White": game_item.get("white", "?"),
+                    "EloW": str(game_item.get("white_elo", "")),
+                    "Black": game_item.get("black", "?"),
+                    "EloB": str(game_item.get("black_elo", "")),
+                    "Result": game_item.get("result", "*"),
+                    "ECO": game_item.get("eco", ""),
+                    "Date": game_item.get("date", ""),
+                    "Event": game_item.get("event", ""),
+                    "Site": game_item.get("site", ""),
+                    "Round": str(game_item.get("round", "")),
+                    "PGN": pgn_text,
+                    "_id": game_id,
+                }
+                self.gameSelected.emit(payload)
 
-        pgn_text = ""
-        if pgn_path and offset is not None and length is not None:
-            try:
-                with open(pgn_path, "r", encoding="utf-8", errors="ignore") as f:
-                    f.seek(offset)
-                    pgn_text = f.read(length)
-            except Exception as e:
-                print(f"Error lazy-loading PGN: {e}")
-
-        payload = {h: row_data.get(h, "") for h in GameListTableModel.HEADERS}
-        payload["PGN"] = pgn_text
-        payload["_pgn_path"] = pgn_path
-        payload["_offset"] = offset
-        payload["_length"] = length
-        self.gameSelected.emit(payload)
+        self.client.get_pgn(int(game_id), callback=on_pgn_received)
 
     def save_header_state(self):
-        from PyQt5.QtCore import QSettings
-
-        settings = QSettings("QChessApp", "Config")
-        settings.setValue(
-            "home_table_header_state", self.table.horizontalHeader().saveState()
-        )
+        settings = QtCore.QSettings("QChessApp", "Config")
+        settings.setValue("home_table_header_state", self.table.horizontalHeader().saveState())
 
     def restore_header_state(self):
-        from PyQt5.QtCore import QSettings
-
-        settings = QSettings("QChessApp", "Config")
+        settings = QtCore.QSettings("QChessApp", "Config")
         state = settings.value("home_table_header_state")
         if state is not None:
             self.table.horizontalHeader().restoreState(state)
-            self._hide_moves_column()
         else:
             self._apply_default_widths()
 
     def _apply_default_widths(self):
         default_widths = {
-            "Event": 180,
-            "Site": 150,
-            "Date": 95,
-            "Round": 60,
+            "ID": 55,
             "White": 160,
+            "EloW": 65,
             "Black": 160,
-            "EloW": 75,
-            "EloB": 75,
-            "Result": 75,
-            "ECO": 60,
-            "Move Count": 85,
+            "EloB": 65,
+            "Result": 70,
+            "ECO": 55,
+            "Date": 90,
+            "Event": 160,
+            "Site": 130,
+            "Round": 55,
+            "Status": 70,
         }
         for i, h in enumerate(GameListTableModel.HEADERS):
             width = default_widths.get(h, 100)
             self.table.setColumnWidth(i, width)
-        self._hide_moves_column()
 
     def _on_header_context_menu(self, pos):
         menu = QtWidgets.QMenu(self)
-
-        # Add checkable items for each column (except "Moves")
         header = self.table.horizontalHeader()
         for idx in range(len(GameListTableModel.HEADERS)):
             name = GameListTableModel.HEADERS[idx]
-            if name == "Moves":
-                continue
-
             action = menu.addAction(name)
             action.setCheckable(True)
             action.setChecked(not header.isSectionHidden(idx))
             action.triggered.connect(
-                lambda checked, col_idx=idx: self.toggle_column_visibility(
-                    col_idx, checked
-                )
+                lambda checked, col_idx=idx: self.toggle_column_visibility(col_idx, checked)
             )
 
         menu.addSeparator()
         config_action = menu.addAction("Configure Columns...")
         config_action.triggered.connect(self.configure_columns)
-
         menu.exec_(self.table.horizontalHeader().mapToGlobal(pos))
 
     def toggle_column_visibility(self, col_idx, visible):
@@ -553,22 +539,18 @@ class GameListTableWidget(QtWidgets.QWidget):
         )
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             settings = dlg.get_column_settings()
-
             header = self.table.horizontalHeader()
             header.blockSignals(True)
 
             for visual_idx, s in enumerate(settings):
                 logical_idx = s["logical_idx"]
                 visible = s["visible"]
-
                 header.setSectionHidden(logical_idx, not visible)
-
                 curr_vis = header.visualIndex(logical_idx)
                 if curr_vis != visual_idx:
                     header.moveSection(curr_vis, visual_idx)
 
             header.blockSignals(False)
-            self._hide_moves_column()
             self.save_header_state()
 
 
@@ -588,12 +570,10 @@ class ColumnConfigDialog(QtWidgets.QDialog):
         info_lbl.setStyleSheet("color: #9CA3AF; font-size: 11px;")
         layout.addWidget(info_lbl)
 
-        # List Widget
         self.list_widget = QtWidgets.QListWidget(self)
         self.list_widget.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
         layout.addWidget(self.list_widget)
 
-        # Buttons
         btn_layout = QtWidgets.QHBoxLayout()
         self.up_btn = QtWidgets.QPushButton("Move Up")
         self.down_btn = QtWidgets.QPushButton("Move Down")
@@ -601,7 +581,6 @@ class ColumnConfigDialog(QtWidgets.QDialog):
         btn_layout.addWidget(self.down_btn)
         layout.addLayout(btn_layout)
 
-        # Buttons box
         buttons = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
         )
@@ -609,18 +588,14 @@ class ColumnConfigDialog(QtWidgets.QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        # Load columns
         self.load_columns()
 
-        # Connections
         self.up_btn.clicked.connect(self.move_up)
         self.down_btn.clicked.connect(self.move_down)
 
     def load_columns(self):
         visual_map = {}
         for logical_idx in range(len(self.headers)):
-            if self.headers[logical_idx] == "Moves":
-                continue
             vis_idx = self.header_view.visualIndex(logical_idx)
             visual_map[vis_idx] = logical_idx
 

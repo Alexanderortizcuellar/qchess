@@ -190,6 +190,36 @@ class ChessBoard(QtWidgets.QWidget):
             "chess.com": {"light": "#eeeed2", "dark": "#769656"},
             "blue": {"light": "#ebecd0", "dark": "#779bb0"},
             "wood": {"light": "#dec29b", "dark": "#966f33"},
+            "cerezo": {
+                "light": "#e8ceab",
+                "dark": "#9c4a2f",
+                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "leather": {
+                "light": "#dfc7a7",
+                "dark": "#7a583e",
+                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "classic green": {
+                "light": "#ffffdd",
+                "dark": "#538053",
+                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "marble": {
+                "light": "#e4e7eb",
+                "dark": "#6d7f8d",
+                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "selected": "rgba(0, 150, 255, 0.4)",
+            },
+            "nogal": {
+                "light": "#edd6b1",
+                "dark": "#674224",
+                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
         }
         if isinstance(theme_name_or_dict, str):
             theme = themes.get(theme_name_or_dict.lower(), themes["classic"])

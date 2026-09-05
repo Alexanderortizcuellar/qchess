@@ -31,6 +31,7 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox,
     QComboBox,
     QFormLayout,
+    QLineEdit,
 )
 
 from core.repertoire_db import RepertoireRepository, RepertoireNode
@@ -225,17 +226,35 @@ class RepertoireTreeWidget(QWidget):
 
     def _build_header(self) -> QWidget:
         w = QWidget()
-        w.setFixedHeight(34)
+        w.setFixedHeight(36)
         w.setStyleSheet("""
             QWidget { background: #21201d; border-bottom: 1px solid #312e2b; }
         """)
         layout = QHBoxLayout(w)
-        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
         layout.setAlignment(Qt.AlignVCenter)
 
-        # Spacer so buttons sit at the right edge
-        layout.addStretch()
+        # Search bar
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search...")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setFixedHeight(24)
+        self.search_edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #262421;
+                color: #e5e7eb;
+                border: 1px solid #403d39;
+                border-radius: 3px;
+                padding: 1px 6px;
+                font-size: 11px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #e6912c;
+            }
+        """)
+        self.search_edit.textChanged.connect(self._on_search_changed)
+        layout.addWidget(self.search_edit, 1, Qt.AlignVCenter)
 
         # New folder button
         btn_folder = QPushButton()
@@ -283,10 +302,12 @@ class RepertoireTreeWidget(QWidget):
             b.clicked.connect(slot)
             return b
 
-        layout.addWidget(_small_btn("fa5s.file-import",  "Import PGN",  self._import_pgn), 0, Qt.AlignVCenter)
-        layout.addWidget(_small_btn("fa5s.file-export",  "Export PGN",  self._export_pgn), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.file-import",  "Import PGN",    self._import_pgn), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.file-export",  "Export PGN",    self._export_pgn), 0, Qt.AlignVCenter)
         layout.addStretch()
-        layout.addWidget(_small_btn("fa5s.sync-alt",     "Refresh",     self.refresh), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.expand-alt",   "Expand All",    self.expand_all), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.compress-alt", "Collapse All",  self.collapse_all), 0, Qt.AlignVCenter)
+        layout.addWidget(_small_btn("fa5s.sync-alt",     "Refresh",       self.refresh), 0, Qt.AlignVCenter)
 
         return w
 
@@ -318,7 +339,7 @@ class RepertoireTreeWidget(QWidget):
                 item.setForeground(0, FOLDER_COLOR)
                 item.setFlags(item.flags() | Qt.ItemIsDropEnabled)
             else:
-                item.setIcon(0, qta.icon("fa5s.chess-knight", color="#cbd5e1"))
+                item.setIcon(0, qta.icon("fa5s.book", color="#cbd5e1"))
                 item.setForeground(0, REPERTOIRE_COLOR)
                 item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
 
@@ -346,6 +367,46 @@ class RepertoireTreeWidget(QWidget):
 
         # Restore expanded state
         self._restore_expanded(self.tree.invisibleRootItem(), expanded_ids)
+
+        # Re-apply search filter if query is active
+        if hasattr(self, "search_edit") and self.search_edit.text().strip():
+            self._filter_tree(self.search_edit.text())
+
+    def _on_search_changed(self, text: str):
+        self._filter_tree(text)
+
+    def _filter_tree(self, text: str):
+        query = text.strip().lower()
+        if not query:
+            self._set_all_visible(self.tree.invisibleRootItem(), True)
+            return
+
+        self._filter_item(self.tree.invisibleRootItem(), query)
+
+    def _filter_item(self, item: QTreeWidgetItem, query: str) -> bool:
+        """Recursively filter tree items. Returns True if this item or any descendant matches."""
+        has_matching_child = False
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if self._filter_item(child, query):
+                has_matching_child = True
+
+        if item is not self.tree.invisibleRootItem():
+            item_name = item.text(0).lower()
+            item_matches = query in item_name
+            visible = item_matches or has_matching_child
+            item.setHidden(not visible)
+            if visible and has_matching_child:
+                item.setExpanded(True)
+            return visible
+
+        return has_matching_child
+
+    def _set_all_visible(self, parent_item: QTreeWidgetItem, visible: bool):
+        for i in range(parent_item.childCount()):
+            child = parent_item.child(i)
+            child.setHidden(not visible)
+            self._set_all_visible(child, visible)
 
     def _collect_expanded(self, parent_item, result: set):
         for i in range(parent_item.childCount()):
@@ -415,6 +476,11 @@ class RepertoireTreeWidget(QWidget):
                            "New Folder",       self._new_folder_at_root)
             menu.addAction(qta.icon("fa5s.plus", color="#cbd5e1"),
                            "New Repertoire",   self._new_repertoire_at_root)
+            menu.addSeparator()
+            menu.addAction(qta.icon("fa5s.expand-alt", color="#a9aea7"),
+                           "Expand All",       self.expand_all)
+            menu.addAction(qta.icon("fa5s.compress-alt", color="#a9aea7"),
+                           "Collapse All",     self.collapse_all)
         else:
             node_type = item.data(0, NODE_TYPE_ROLE)
 
@@ -426,7 +492,7 @@ class RepertoireTreeWidget(QWidget):
                 menu.addSeparator()
 
             if node_type == "repertoire":
-                menu.addAction(qta.icon("fa5s.chess-knight", color="#cbd5e1"),
+                menu.addAction(qta.icon("fa5s.book-open", color="#cbd5e1"),
                                "Open",            lambda: self._open_repertoire(item))
                 menu.addSeparator()
 
@@ -443,11 +509,39 @@ class RepertoireTreeWidget(QWidget):
                                "Export PGN…",     lambda: self._export_pgn_of(item))
                 menu.addSeparator()
 
+            menu.addAction(qta.icon("fa5s.expand-alt", color="#a9aea7"),
+                           "Expand All",          self.expand_all)
+            menu.addAction(qta.icon("fa5s.compress-alt", color="#a9aea7"),
+                           "Collapse All",        self.collapse_all)
+            menu.addSeparator()
+
             act_del = menu.addAction(qta.icon("fa5s.trash-alt", color="#f87171"),
                                      "Delete")
             act_del.triggered.connect(lambda: self._delete(item))
 
         menu.exec_(self.tree.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------------
+    # Tree expansion helpers
+    # ------------------------------------------------------------------
+
+    def expand_all(self):
+        """Expand all tree items and update folder open icons."""
+        self.tree.expandAll()
+        self._update_all_folder_icons(self.tree.invisibleRootItem(), True)
+
+    def collapse_all(self):
+        """Collapse all tree items and update folder closed icons."""
+        self.tree.collapseAll()
+        self._update_all_folder_icons(self.tree.invisibleRootItem(), False)
+
+    def _update_all_folder_icons(self, parent_item: QTreeWidgetItem, expanded: bool):
+        icon_name = "fa5s.folder-open" if expanded else "fa5s.folder"
+        for i in range(parent_item.childCount()):
+            child = parent_item.child(i)
+            if child.data(0, NODE_TYPE_ROLE) == "folder":
+                child.setIcon(0, qta.icon(icon_name, color="#fb923c"))
+            self._update_all_folder_icons(child, expanded)
 
     # ------------------------------------------------------------------
     # Double-click

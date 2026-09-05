@@ -47,6 +47,7 @@ class ChessApp(QMainWindow):
     # Emitted when the user saves a repertoire from the File menu.
     # Carries the current PGN text; the controller decides where to store it.
     repertoireSaveRequested = pyqtSignal(str)
+    searchPositionRequested = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -300,13 +301,12 @@ class ChessApp(QMainWindow):
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
         self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
 
-        # Restore saved window state and geometry if available, else apply defaults
+        # Restore saved dock window state if available, else apply defaults
         from PyQt5.QtCore import QSettings
         layout_settings = QSettings("TestChessApp", "Layout")
-        saved_geometry = layout_settings.value("geometry")
         saved_state = layout_settings.value("windowState")
-        if saved_geometry and saved_state:
-            QTimer.singleShot(0, lambda: (self.restoreGeometry(saved_geometry), self.restoreState(saved_state)))
+        if saved_state:
+            QTimer.singleShot(0, lambda: self.restoreState(saved_state))
         else:
             QTimer.singleShot(100, lambda: self.resizeDocks([self.analysis_dock, self.pgn_dock], [200, 600], Qt.Vertical))
 
@@ -348,6 +348,7 @@ class ChessApp(QMainWindow):
             else None
         )
         self.engine.moveFound.connect(self.on_best_move_found)
+        self.analysis_dock.visibilityChanged.connect(self._on_analysis_dock_visibility_changed)
 
         # Event filter for mouse wheel navigation on chessboard
         self.chessboard.installEventFilter(self)
@@ -411,6 +412,35 @@ class ChessApp(QMainWindow):
         self.pending_analysis_fen = None
         self.analysis_update_timer.stop()
         self.bar.setAnimationDuration(700)
+
+    def get_current_engine_eval(self) -> str | None:
+        """Return formatted engine evaluation string (e.g. '+0.35', '#-2') if engine is active."""
+        if not hasattr(self, "analysis_widget") or not self.analysis_widget.check_analysis.isChecked():
+            return None
+        
+        # 1. Try first multipv line from analysis widget
+        line_1 = self.analysis_widget.analysis_lines.get(1)
+        if line_1:
+            s_type = line_1.get("score_type")
+            s_val = line_1.get("score_value")
+            if s_type and s_val is not None:
+                fen = line_1.get("fen", self.chessboard.fen())
+                board = chess.Board(fen) if fen else self.chessboard._internal_board
+                white_pov = s_val if board.turn == chess.WHITE else -s_val
+                if s_type == "mate":
+                    return f"#{white_pov}"
+                else:
+                    prefix = "+" if (white_pov / 100.0) > 0 else ""
+                    return f"{prefix}{white_pov / 100.0:.2f}"
+                    
+        # 2. Fallback to score label
+        score_text = self.analysis_widget.score_label.text().strip()
+        if score_text and score_text not in ("0.00", "--", "Starting...", "...", ""):
+            if score_text.startswith("M"):
+                return score_text.replace("M", "#")
+            return score_text
+            
+        return None
 
     def run_debounced_send_position(self):
         from PyQt5.QtCore import QSettings
@@ -515,6 +545,9 @@ class ChessApp(QMainWindow):
         setup_board_action = _create_action(
             self, "Set Up Board...", self.setup_board, "Ctrl+Shift+T", icon_name="fa5s.chess-board"
         )
+        search_position_action = _create_action(
+            self, "Search Position in Database...", self.search_current_position, "Ctrl+F", icon_name="fa5s.search"
+        )
         copy_board_img_action = _create_action(
             self, "Copy Board Image", self.copy_board_image, "Ctrl+Shift+C", icon_name="fa5s.copy"
         )
@@ -602,6 +635,7 @@ class ChessApp(QMainWindow):
 
         board_menu.addAction(reset_board_action)
         board_menu.addAction(setup_board_action)
+        board_menu.addAction(search_position_action)
         board_menu.addSeparator()
         board_menu.addAction(export_img_action)
         board_menu.addAction(copy_board_img_action)
@@ -617,7 +651,7 @@ class ChessApp(QMainWindow):
 
         # Quick Access Toolbar Actions
         flip_action = _create_action(
-            self, "Flip Board", self.flip_board, "Ctrl+F", icon_name="ei.refresh"
+            self, "Flip Board", self.flip_board, "F", icon_name="ei.refresh"
         )
         clear_action = _create_action(
             self, "Clear PGN", self.clear_pgn, "Ctrl+Shift+D", icon_name="fa5s.trash"
@@ -627,6 +661,7 @@ class ChessApp(QMainWindow):
             [
                 open_action,
                 save_action,
+                search_position_action,
                 copy_action,
                 paste_pgn_action,
                 edit_headers_action,
@@ -636,6 +671,11 @@ class ChessApp(QMainWindow):
                 clear_action,
             ]
         )
+
+    def search_current_position(self):
+        """Emit signal to search the current board position in the database."""
+        fen = self.move_manager.get_board().fen()
+        self.searchPositionRequested.emit(fen)
 
     def toggle_autoplay(self, checked: bool):
         if checked:
@@ -648,9 +688,11 @@ class ChessApp(QMainWindow):
     def forward(self, force_dialog=False, follow_mainline=False):
         if self.move_manager.has_variations():
             variations = self.move_manager.get_current_node_variations()
+            show_vars = getattr(self.browser, "show_variations", True)
             if (
                 len(variations) > 1
                 and not follow_mainline
+                and show_vars
                 and (force_dialog or not self.autoplay_timer.isActive())
             ):
                 dialog = VariationsDialog(
@@ -716,16 +758,19 @@ class ChessApp(QMainWindow):
         self.move_manager.font_family = self.current_figurine_font
         self.move_manager.create_mapping()
         
+        show_nags = settings.value("show_nags", True, type=bool)
         show_eval = settings.value("show_eval_annotations", True, type=bool)
         show_cls = settings.value("show_move_classifications", True, type=bool)
         show_vars = settings.value("show_variations", True, type=bool)
         layout_val = int(settings.value("layout_mode", 1))
 
+        self.browser.show_nags = show_nags
         self.browser.show_eval = show_eval
         self.browser.show_classifications = show_cls
         self.browser.show_variations = show_vars
         self.browser.layout_mode = layout_val
 
+        self.move_manager.show_nags = show_nags
         self.move_manager.show_classifications = show_cls
         self.move_manager.create_mapping()
         self.browser.rebuild_layout(force=True)
@@ -941,7 +986,7 @@ class ChessApp(QMainWindow):
             
         self.gametrain_widget.update_status("Engine thinking...")
         if not self.engine.is_running():
-            self.engine.start()
+            self.engine.ensure_started()
         self.engine.send_position(board.fen(), "depth", options={"depth": self.play_depth})
 
     def make_engine_vs_engine_move(self):
@@ -955,15 +1000,50 @@ class ChessApp(QMainWindow):
             self.gametrain_widget.update_status(f"Game Over - {reason}")
             self.gametrain_widget.stop_play()
             return
-            
+
         self.trigger_engine_play()
 
+    def _on_analysis_dock_visibility_changed(self, visible: bool):
+        """Handle Engine Dock open/close lifecycle.
+
+        Closing the dock stops analysis, cleans up timers, and terminates the engine
+        process to release all system resources.
+        Reopening the dock starts a new process only if analysis is enabled.
+        """
+        if not visible:
+            # Dock closed: Stop analysis and terminate the engine process
+            self.engine_debounce_timer.stop()
+            self.analysis_update_timer.stop()
+            self.self_play_timer.stop()
+            self.clear_pending_analysis()
+            self.engine.quit()
+            self.chessboard.set_eval_bar_visible(False)
+            if hasattr(self, "gametrain_widget") and self.gametrain_widget.playing:
+                self.gametrain_widget.stop_play()
+        else:
+            # Dock opened: Start engine only if analysis is enabled
+            from PyQt5.QtCore import QSettings
+
+            settings = QSettings("TestChessApp", "Config")
+            app_mode = settings.value("app_mode", "Analysis Mode")
+            if app_mode != "Game / Train Mode":
+                if self.analysis_widget.check_analysis.isChecked():
+                    self.engine.ensure_started()
+                    self.chessboard.set_eval_bar_visible(True)
+                    self.send_position(force=True)
+
     def toggle_analysis(self, toggle: bool):
+        """Handle the Engine Checkbox toggled state.
+
+        Checkbox controls whether analysis is ACTIVE.
+        Disabling the checkbox pauses analysis but keeps the engine process alive
+        in the background for quick reuse.
+        """
         if toggle:
-            self.analysis_widget.reset_lines()
+            self.analysis_widget.show_starting_status()
             self.clear_pending_analysis()
             if not self.engine.is_running():
-                self.engine.start()
+                self.engine.ensure_started()
             self.chessboard.set_eval_bar_visible(True)
             self.send_position(force=True)
         else:
@@ -971,6 +1051,7 @@ class ChessApp(QMainWindow):
             self.analysis_widget.clear()
             self.clear_pending_analysis()
             self.chessboard.set_eval_bar_visible(False)
+            # Process is deliberately NOT terminated here (kept alive for quick resumption)
 
     def display_pgn(self):
         self.browser.setHtml(self.move_manager.html)
@@ -988,8 +1069,8 @@ class ChessApp(QMainWindow):
         settings = QSettings("TestChessApp", "Config")
         if settings.value("app_mode", "Analysis Mode") == "Game / Train Mode":
             return
-            
-        if self.analysis_widget.check_analysis.isChecked():
+
+        if self.analysis_dock.isVisible() and self.analysis_widget.check_analysis.isChecked():
             current_fen = self.chessboard.fen()
             if not force and hasattr(self, "_last_sent_fen") and self._last_sent_fen == current_fen:
                 return
@@ -999,12 +1080,12 @@ class ChessApp(QMainWindow):
             now = time.time()
             time_since_last_move = now - getattr(self, "last_move_time", 0)
             self.last_move_time = now
-            
+
             # Fast navigation is defined as moves played less than 250ms apart (> 4 moves per second)
             is_fast_navigation = (time_since_last_move < 0.25)
-            
+
             self.has_received_first_update = False
-            
+
             # Stop the engine immediately if navigating fast. Otherwise, let ChessEngine queue the next search.
             if is_fast_navigation:
                 self.engine.stop_search()
@@ -1049,13 +1130,15 @@ class ChessApp(QMainWindow):
     def open_engine_config(self):
         dlg = EngineConfigDialog(self)
         if dlg.exec_() == QDialog.Accepted:
-            self.engine.quit()
-            self.engine.set_settings(dlg.get_config())
-            if self.analysis_widget.check_analysis.isChecked():
-                self.engine.start()
+            config = dlg.get_config()
+            self.engine.set_settings(config)
+            if self.analysis_dock.isVisible() and self.analysis_widget.check_analysis.isChecked():
+                self.engine.ensure_started()
                 self.send_position(force=True)
+            else:
+                self.engine.quit()
         else:
-            if not self.analysis_widget.check_analysis.isChecked():
+            if not (self.analysis_dock.isVisible() and self.analysis_widget.check_analysis.isChecked()):
                 self.engine.quit()
 
     def paste_pgn(self):
@@ -1193,7 +1276,6 @@ class ChessApp(QMainWindow):
     def closeEvent(self, a0):
         from PyQt5.QtCore import QSettings
         layout_settings = QSettings("TestChessApp", "Layout")
-        layout_settings.setValue("geometry", self.saveGeometry())
         layout_settings.setValue("windowState", self.saveState())
         layout_settings.setValue("show_fen", "true" if self.show_fen_action.isChecked() else "false")
 
@@ -1227,5 +1309,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = ChessApp()
     window.set_style("dark")
-    window.show()
+    window.showMaximized()
     sys.exit(app.exec_())

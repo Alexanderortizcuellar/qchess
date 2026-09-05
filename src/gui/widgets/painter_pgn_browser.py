@@ -96,7 +96,7 @@ class QPainterBrowser(QWidget):
                 
             for token in block.tokens:
                 # Set layout fonts and measure token width
-                if token.token_type == "move":
+                if token.token_type == "move" or token.token_type == "result":
                     if token.level == 0:
                         fm_current = fm_bold
                     else:
@@ -233,6 +233,11 @@ class QPainterBrowser(QWidget):
                 elif token.token_type == "eval":
                     painter.setFont(ann_font)
                     painter.setPen(eval_color)
+                    painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
+                    
+                elif token.token_type == "result":
+                    painter.setFont(bold_font)
+                    painter.setPen(main_move_color)
                     painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
                     
                 else:
@@ -410,6 +415,7 @@ class QPainterPGNBrowser(QWidget):
         self.cb_compact = False
         self.show_comments = True
         self.show_variations = True
+        self.show_nags = True
         self.show_eval = True
         self.show_classifications = True
         self.layout_mode = 1  # 1 = ChessBase Blocks
@@ -455,12 +461,14 @@ class QPainterPGNBrowser(QWidget):
     def rebuild_layout(self, force=False):
         self.is_dark = self.move_manager.html_style
         
-        # Check if PGN nodes or headers have changed to determine if we should rebuild the layout cache
+        # Check if PGN nodes, comments, NAGs, or headers have changed to determine if we should rebuild the layout cache
         current_nodes = getattr(self.move_manager, 'nodes', [])
         current_comments = [getattr(node, 'comment', '') for node in current_nodes]
+        current_nags = [set(getattr(node, 'nags', ())) for node in current_nodes]
         nodes_changed = True
         if (hasattr(self, 'cached_nodes') and len(self.cached_nodes) == len(current_nodes) and
-            hasattr(self, 'cached_comments') and self.cached_comments == current_comments):
+            hasattr(self, 'cached_comments') and self.cached_comments == current_comments and
+            hasattr(self, 'cached_nags') and self.cached_nags == current_nags):
             nodes_changed = False
             for i in range(len(current_nodes)):
                 if self.cached_nodes[i] is not current_nodes[i]:
@@ -478,11 +486,14 @@ class QPainterPGNBrowser(QWidget):
             layout_width = 300
             
         width_changed = (not hasattr(self, 'last_layout_width') or self.last_layout_width != layout_width)
+        show_nags_changed = (not hasattr(self, 'cached_show_nags') or self.cached_show_nags != self.show_nags)
         
-        if force or nodes_changed or headers_changed or width_changed or getattr(self, 'layout_invalid', False):
+        if force or nodes_changed or headers_changed or width_changed or show_nags_changed or getattr(self, 'layout_invalid', False):
             self.cached_nodes = list(current_nodes)
             self.cached_comments = list(current_comments)
+            self.cached_nags = list(current_nags)
             self.cached_headers = current_headers
+            self.cached_show_nags = self.show_nags
             self.last_layout_width = layout_width
             self.layout_invalid = False
             
@@ -518,6 +529,26 @@ class QPainterPGNBrowser(QWidget):
                 else:
                     self.traverse_layout_b(first_move, 0, self.blocks, self.flat_nodes, self.show_comments, self.show_variations)
                     
+                # Append Result at the end of the game if available (omit '*' when no definitive result)
+                result = game.headers.get("Result", "*")
+                if not result or result in ("*", "?"):
+                    # Check if checkmate / game over on the mainline
+                    end_node = game
+                    while end_node.variations:
+                        end_node = end_node.variations[0]
+                    res = end_node.board().result()
+                    if res != "*":
+                        result = res
+                        game.headers["Result"] = res
+
+                if result in ("1-0", "0-1", "1/2-1/2"):
+                    if self.blocks:
+                        self.blocks[-1].tokens.append(Token("result", result, level=0))
+                    else:
+                        block = PaintBlock(0)
+                        block.tokens.append(Token("result", result, level=0))
+                        self.blocks.append(block)
+
             self.paint_widget.compute_layout(self.blocks)
             
         self.update_active_index()
@@ -550,7 +581,7 @@ class QPainterPGNBrowser(QWidget):
             scrollbar.setValue(target_y)
 
     def jump_to_move(self, index):
-        if 0 <= index < len(self.flat_nodes):
+        if 0 <= index < len(self.move_manager.nodes):
             self.move_manager.jump_to(index)
             self.anchorClicked.emit(QUrl(f"move({index})"))
 
@@ -582,10 +613,17 @@ class QPainterPGNBrowser(QWidget):
                 curr.san = san
                 curr.move_number = move_num
                 curr.turn = board.turn
+            from core.move_manager import format_san_with_nags, NAG_TO_CLS
+            if self.show_nags:
+                san_display = format_san_with_nags(san, getattr(curr, 'nags', None))
+            else:
+                san_display = san
             
-            move_idx = len(flat_nodes)
+            move_idx = getattr(curr, 'flat_index', None)
+            if move_idx is None:
+                move_idx = len(flat_nodes)
+                curr.flat_index = move_idx
             flat_nodes.append(curr)
-            curr.flat_index = move_idx
             
             # Extract compact eval if present
             eval_text = ""
@@ -594,35 +632,37 @@ class QPainterPGNBrowser(QWidget):
                 if eval_match:
                     eval_text = format_compact_eval(eval_match.group(1))
 
-            # Extract classification
+            # Extract classification from NAGs
             cls_val = None
-            if curr.comment:
-                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', curr.comment)
-                if alz_match:
-                    cls_tokens = alz_match.group(1).split()
-                    for token in cls_tokens:
-                        if token.startswith("cls="):
-                            try:
-                                cls_val = int(token.split("=")[1])
-                            except ValueError:
-                                pass
+            if hasattr(curr, 'nags') and curr.nags:
+                for nag in sorted(curr.nags):
+                    if nag in NAG_TO_CLS:
+                        cls_val = NAG_TO_CLS[nag]
+                        break
             
             if is_white_turn:
                 block = PaintBlock(level)
                 block.tokens.append(Token("num", f"{move_num}.", level=level))
-                block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
+                block.tokens.append(Token("move", san_display, move_idx=move_idx, level=level, classification=cls_val))
                 if eval_text:
                     block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 blocks.append(block)
             else:
-                if blocks and blocks[-1].tokens and blocks[-1].tokens[-1].token_type == "move" and blocks[-1].level == level and "..." not in blocks[-1].tokens[0].text:
-                    blocks[-1].tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
+                has_white_move = (
+                    blocks
+                    and blocks[-1].level == level
+                    and blocks[-1].tokens
+                    and "..." not in blocks[-1].tokens[0].text
+                    and sum(1 for t in blocks[-1].tokens if t.token_type == "move") == 1
+                )
+                if has_white_move:
+                    blocks[-1].tokens.append(Token("move", san_display, move_idx=move_idx, level=level, classification=cls_val))
                     if eval_text:
                         blocks[-1].tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                 else:
                     block = PaintBlock(level)
                     block.tokens.append(Token("num", f"{move_num}...", level=level))
-                    block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
+                    block.tokens.append(Token("move", san_display, move_idx=move_idx, level=level, classification=cls_val))
                     if eval_text:
                         block.tokens.append(Token("eval", eval_text, move_idx=move_idx, level=level))
                     blocks.append(block)
@@ -664,9 +704,17 @@ class QPainterPGNBrowser(QWidget):
                 curr.move_number = move_num
                 curr.turn = board.turn
             
-            move_idx = len(flat_nodes)
+            from core.move_manager import format_san_with_nags, NAG_TO_CLS
+            if self.show_nags:
+                san_display = format_san_with_nags(san, getattr(curr, 'nags', None))
+            else:
+                san_display = san
+            
+            move_idx = getattr(curr, 'flat_index', None)
+            if move_idx is None:
+                move_idx = len(flat_nodes)
+                curr.flat_index = move_idx
             flat_nodes.append(curr)
-            curr.flat_index = move_idx
             
             if level == 0:
                 if current_block is None:
@@ -690,20 +738,15 @@ class QPainterPGNBrowser(QWidget):
                     current_block.tokens.append(Token("num", f"{move_num}...", level=level))
                     need_prefix = False
 
-            # Extract classification
+            # Extract classification from NAGs
             cls_val = None
-            if curr.comment:
-                alz_match = re.search(r'\[%alz\s+([^\]]+)\]', curr.comment)
-                if alz_match:
-                    cls_tokens = alz_match.group(1).split()
-                    for token in cls_tokens:
-                        if token.startswith("cls="):
-                            try:
-                                cls_val = int(token.split("=")[1])
-                            except ValueError:
-                                pass
+            if hasattr(curr, 'nags') and curr.nags:
+                for nag in sorted(curr.nags):
+                    if nag in NAG_TO_CLS:
+                        cls_val = NAG_TO_CLS[nag]
+                        break
                     
-            current_block.tokens.append(Token("move", san, move_idx=move_idx, level=level, classification=cls_val))
+            current_block.tokens.append(Token("move", san_display, move_idx=move_idx, level=level, classification=cls_val))
             
             # Extract and add compact eval if present
             if self.show_eval and curr.comment:
@@ -786,21 +829,75 @@ class QPainterPGNBrowser(QWidget):
         """)
 
         import qtawesome as qta
+        
+        node = self.move_manager.get_node_by_index(move_idx)
+        current_nags = getattr(node, "nags", set())
+
+        # --- Move Evaluation Submenu ---
+        move_eval_menu = menu.addMenu("Move Evaluation")
+        move_eval_options = [
+            (1, "Good move (!)"),
+            (2, "Poor or mistake move (?)"),
+            (3, "Excellent or brilliant move (!!)"),
+            (4, "Blunder (??)"),
+            (5, "Interesting move (!?)"),
+            (6, "Dubious move (?!)"),
+            (9, "Miss"),
+        ]
+        for nag_id, label in move_eval_options:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(nag_id in current_nags)
+            act.triggered.connect(lambda checked, idx=move_idx, n=nag_id: self.move_manager.set_move_nag(idx, n))
+            move_eval_menu.addAction(act)
+
+        # --- Position Evaluation Submenu ---
+        pos_eval_menu = menu.addMenu("Position Evaluation")
+        pos_eval_options = [
+            (10, "Equal position (=)"),
+            (14, "White has a slight advantage (+=)"),
+            (15, "Black has a slight advantage (=+)"),
+            (16, "White has a moderate advantage (+/-)"),
+            (17, "Black has a moderate advantage (-/+)"),
+            (18, "White has a decisive advantage (+-)"),
+            (19, "Black has a decisive advantage (-+)"),
+        ]
+        for nag_id, label in pos_eval_options:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setChecked(nag_id in current_nags)
+            act.triggered.connect(lambda checked, idx=move_idx, n=nag_id: self.move_manager.set_pos_nag(idx, n))
+            pos_eval_menu.addAction(act)
+
+        clear_eval_act = QAction("Clear Evaluation", self)
+        clear_eval_act.triggered.connect(lambda checked, idx=move_idx: self.move_manager.clear_nags(idx))
+        menu.addAction(clear_eval_act)
+
+        # --- Add Engine Evaluation (only when engine is enabled) ---
+        if self.is_engine_enabled():
+            eval_score = self.get_current_engine_eval()
+            eval_label = f"Add Eval ({eval_score})" if eval_score else "Add Eval"
+            add_eval_act = QAction(qta.icon("fa5s.chart-line", color="#a9aea7"), eval_label, self)
+            add_eval_act.triggered.connect(lambda checked, idx=move_idx: self.on_add_eval(idx))
+            menu.addAction(add_eval_act)
+
+        menu.addSeparator()
+
         actions = [
+            ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
+            (None, None, None),  # Separator
             ("Promote to Main Line", self.on_promote_to_main, "fa5s.arrow-up"),
             ("Promote Move", self.on_promote, "fa5s.chevron-up"),
             ("Demote Move", self.on_demote, "fa5s.chevron-down"),
             ("Delete from Here", self.on_delete, "fa5s.trash-alt"),
-            (None, None, None),  # Separator
-            ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
         ]
 
         for name, func, icon_name in actions:
             if name is None:
                 menu.addSeparator()
             else:
-                icon = qta.icon(icon_name)
-                act = QAction(icon, name, self)
+                icon = qta.icon(icon_name) if icon_name else None
+                act = QAction(icon, name, self) if icon else QAction(name, self)
                 act.triggered.connect(lambda checked, f=func: f(anchor))
                 menu.addAction(act)
 
@@ -834,6 +931,23 @@ class QPainterPGNBrowser(QWidget):
         node_index = self.match_node(anchor)
         if node_index is not None:
             self.move_manager.delete_from_here(node_index)
+
+    def is_engine_enabled(self) -> bool:
+        app = self.window()
+        if hasattr(app, "analysis_widget") and hasattr(app.analysis_widget, "check_analysis"):
+            return app.analysis_widget.check_analysis.isChecked()
+        return False
+
+    def get_current_engine_eval(self) -> str | None:
+        app = self.window()
+        if hasattr(app, "get_current_engine_eval"):
+            return app.get_current_engine_eval()
+        return None
+
+    def on_add_eval(self, move_idx: int):
+        eval_score = self.get_current_engine_eval()
+        if eval_score:
+            self.move_manager.set_eval_annotation(move_idx, eval_score)
 
     def match_node(self, anchor: str) -> int | None:
         match = re.match(r"move\((\d+)\)", anchor)

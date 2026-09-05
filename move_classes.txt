@@ -1,0 +1,6 @@
+innacuracy=$6
+miss=9$
+mistake=$2
+great=$1
+blunder=$4
+brilliant=$3

@@ -3,3 +3,4 @@ __pycache__
 *.pgn
 instructions/
 target/
+.ruff_cache
