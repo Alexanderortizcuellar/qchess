@@ -1,9 +1,9 @@
-from typing import Optional
 import chess
+import qtawesome as qta
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox, QTabWidget, QWidget, QRadioButton,
-    QGroupBox, QSpinBox
+    QGroupBox, QSpinBox, QButtonGroup, QMessageBox, QApplication
 )
 try:
     from gui.widgets.board_widget import ChessBoardEditorWidget
@@ -166,7 +166,13 @@ class AdvancedSearchDialog(QDialog):
         board_col.addWidget(self.board_editor)
 
         board_btn_row = QHBoxLayout()
-        btn_clear_b = QPushButton("Clear Board (Empty)")
+        btn_paste_board = QPushButton(qta.icon("fa5s.paste", color="#93c5fd"), "Paste Active Board")
+        btn_paste_board.setToolTip("Paste position from any open chessboard or analysis editor window")
+        btn_paste_board.setStyleSheet("font-weight: bold; background-color: #1e3a5f; color: white;")
+        btn_paste_board.clicked.connect(self.paste_opened_board_position)
+        board_btn_row.addWidget(btn_paste_board)
+
+        btn_clear_b = QPushButton("Clear Board")
         btn_clear_b.clicked.connect(self.board_editor.clear_board)
         board_btn_row.addWidget(btn_clear_b)
 
@@ -185,7 +191,15 @@ class AdvancedSearchDialog(QDialog):
         controls_col = QVBoxLayout()
         controls_col.setSpacing(10)
 
-        controls_col.addWidget(QLabel("<b>Board FEN / Piece Placement:</b>"))
+        fen_header_row = QHBoxLayout()
+        fen_header_row.addWidget(QLabel("<b>Board FEN / Piece Placement:</b>"))
+        fen_header_row.addStretch()
+        btn_paste_fen = QPushButton(qta.icon("fa5s.chess-board", color="#93c5fd"), "Paste Board Position")
+        btn_paste_fen.setToolTip("Paste FEN from active chessboard window or clipboard")
+        btn_paste_fen.clicked.connect(self.paste_opened_board_position)
+        fen_header_row.addWidget(btn_paste_fen)
+        controls_col.addLayout(fen_header_row)
+
         self.in_fen = QLineEdit()
         self.in_fen.setPlaceholderText("e.g. 8/8/8/8/3Q4/8/8/8 or full FEN")
         self.in_fen.textChanged.connect(self.on_fen_text_edited)
@@ -515,6 +529,82 @@ class AdvancedSearchDialog(QDialog):
         self.board_editor.clear_board()
         self.board_editor.board.set_piece_at(square, chess.Piece(role, color))
         self.board_editor.update_board_ui()
+
+    def paste_opened_board_position(self):
+        """Retrieve the current board position from any open chessboard/analysis window, or clipboard."""
+        fen = self._get_opened_chessboard_fen()
+        if fen:
+            self.board_editor.set_fen(fen)
+            self.in_fen.setText(fen)
+            # If the FEN has turn (e.g. ' w ' or ' b '), sync turn selector
+            parts = fen.split()
+            if len(parts) >= 2:
+                if parts[1] == 'w':
+                    self.rb_turn_w.setChecked(True)
+                elif parts[1] == 'b':
+                    self.rb_turn_b.setChecked(True)
+            self.mark_pos_modified()
+            return
+
+        # Fallback to clipboard if valid FEN
+        clip_text = QApplication.clipboard().text().strip()
+        if clip_text and len(clip_text.split("/")) >= 7:
+            try:
+                board = chess.Board(clip_text)
+                self.board_editor.set_fen(board.fen())
+                self.in_fen.setText(board.fen())
+                if board.turn == chess.WHITE:
+                    self.rb_turn_w.setChecked(True)
+                else:
+                    self.rb_turn_b.setChecked(True)
+                self.mark_pos_modified()
+                return
+            except Exception:
+                pass
+
+        QMessageBox.information(
+            self,
+            "No Active Board Found",
+            "No open chessboard window was detected.\n\n"
+            "Tip: Open a game in the Analysis Editor or copy a FEN string to the clipboard and click Paste."
+        )
+
+    def _get_opened_chessboard_fen(self):
+        """Search all application top-level windows for an active ChessApp or chessboard widget."""
+        for widget in QApplication.topLevelWidgets():
+            if widget == self:
+                continue
+            # 1. Direct chessboard widget on window
+            if hasattr(widget, "chessboard"):
+                cb = getattr(widget, "chessboard")
+                if cb and hasattr(cb, "fen"):
+                    try:
+                        f = cb.fen()
+                        if f:
+                            return f
+                    except Exception:
+                        pass
+            # 2. MoveManager on window
+            if hasattr(widget, "move_manager"):
+                mm = getattr(widget, "move_manager")
+                if mm and hasattr(mm, "get_board"):
+                    try:
+                        b = mm.get_board()
+                        if b and hasattr(b, "fen"):
+                            return b.fen()
+                    except Exception:
+                        pass
+            # 3. Direct BoardView / Board widget
+            if hasattr(widget, "board") and widget != self.board_editor:
+                b = getattr(widget, "board")
+                if b and hasattr(b, "fen"):
+                    try:
+                        f = b.fen()
+                        if f:
+                            return f
+                    except Exception:
+                        pass
+        return None
 
     def reset_all(self):
         self._loading = True

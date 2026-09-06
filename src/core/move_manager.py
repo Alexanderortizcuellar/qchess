@@ -5,6 +5,7 @@ import chess.pgn
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from core.pgn_to_html import flatten_nodes_pgn_order
+from core.pgn_annotations import extract_node_shapes, parse_pgn_shapes
 
 
 MOVE_EVAL_NAGS = {
@@ -261,6 +262,15 @@ class MoveManager(QObject):
 
     def get_board(self):
         return self.current_node.board()
+
+    def get_current_shapes_and_highlights(self):
+        """Extract shapes and highlights for the current active node."""
+        return extract_node_shapes(self.current_node)
+
+    def get_node_shapes_and_highlights(self, index: int):
+        """Extract shapes and highlights for a node at the given index."""
+        node = self.get_node_by_index(index)
+        return extract_node_shapes(node)
 
     def to_dict(self):
         "Not Implemented yet"

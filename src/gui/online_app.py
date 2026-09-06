@@ -321,7 +321,13 @@ class OnlineChessApp(QMainWindow):
             idx = int(match.group(1))
             self.move_manager.jump_to(idx)
             fen = self.move_manager.current_node.board().fen()
-            self.chessboard.update_board(fen, self.move_manager.current_node.move)
+            shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
+            self.chessboard.update_board(
+                fen,
+                self.move_manager.current_node.move,
+                shapes=shapes,
+                custom_highlights=highlights,
+            )
             # Disable board if not at the latest move
             self.chessboard.interactive = self.move_manager.current_node.is_end() and (
                 self.my_color == self.move_manager.get_board().turn

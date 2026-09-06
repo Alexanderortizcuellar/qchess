@@ -704,31 +704,48 @@ class ChessApp(QMainWindow):
             else:
                 self.move_manager.redo(0)
 
-            self.chessboard.update_board(
-                self.move_manager.get_board().fen(), self.move_manager.current_node.move
-            )
-            self.display_pgn()
-        elif self.autoplay_timer.isActive():
-            self.autoplay_timer.stop()
-            self.autoplay_action.setChecked(False)
-            self.statusBar().showMessage("Autoplay Finished")
+        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
+        self.chessboard.update_board(
+            self.move_manager.get_board().fen(),
+            self.move_manager.current_node.move,
+            shapes=shapes,
+            custom_highlights=highlights,
+        )
+        self.display_pgn()
+    elif self.autoplay_timer.isActive():
+        self.autoplay_timer.stop()
+        self.autoplay_action.setChecked(False)
+        self.statusBar().showMessage("Autoplay Finished")
 
     def backward(self):
         self.move_manager.undo()
+        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
         self.chessboard.update_board(
-            self.move_manager.get_board().fen(), self.move_manager.current_node.move
+            self.move_manager.get_board().fen(),
+            self.move_manager.current_node.move,
+            shapes=shapes,
+            custom_highlights=highlights,
         )
         self.display_pgn()
 
     def jump_to_start(self):
         self.move_manager.jump_to_start()
-        self.chessboard.update_board(self.move_manager.get_board().fen())
+        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
+        self.chessboard.update_board(
+            self.move_manager.get_board().fen(),
+            shapes=shapes,
+            custom_highlights=highlights,
+        )
         self.display_pgn()
 
     def jump_to_end(self):
         self.move_manager.jump_to_end()
+        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
         self.chessboard.update_board(
-            self.move_manager.get_board().fen(), self.move_manager.current_node.move
+            self.move_manager.get_board().fen(),
+            self.move_manager.current_node.move,
+            shapes=shapes,
+            custom_highlights=highlights,
         )
         self.display_pgn()
 
@@ -888,8 +905,12 @@ class ChessApp(QMainWindow):
     def sync_board_to_pgn(self):
         node = self.move_manager.current_node
         last_move = node.move if hasattr(node, "move") and node.move else None
+        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
         self.chessboard.update_board(
-            self.move_manager.get_board().fen(), last_move
+            self.move_manager.get_board().fen(),
+            last_move,
+            shapes=shapes,
+            custom_highlights=highlights,
         )
         if hasattr(self, "analytics_dock") and self.analytics_dock.isVisible():
             self.analytics_widget.update_data(self.move_manager.game, node)
@@ -900,9 +921,12 @@ class ChessApp(QMainWindow):
         match = re.match(r"move\((\d+)\)", url.toString())
         if match:
             self.move_manager.jump_to(int(match.group(1)))
+            shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
             self.chessboard.update_board(
                 self.move_manager.current_node.board().fen(),
                 self.move_manager.current_node.move,
+                shapes=shapes,
+                custom_highlights=highlights,
             )
 
     def handle_move(self, move_uci):

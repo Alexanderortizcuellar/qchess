@@ -87,7 +87,12 @@ class ChessBoard(QtWidgets.QWidget):
         if has_bar:
             self.eval_bar.setFixedWidth(bar_w)
 
-    def _update_view(self, last_move: chess.Move = None):
+    def _update_view(
+        self,
+        last_move: chess.Move = None,
+        shapes: list = None,
+        custom_highlights: dict = None,
+    ):
         """Syncs the BoardView with the internal board state."""
         dests = {}
         for move in self._internal_board.legal_moves:
@@ -102,6 +107,8 @@ class ChessBoard(QtWidgets.QWidget):
         self.board_view.set(
             fen=self._internal_board.fen(),
             lastMove=last_move,
+            shapes=shapes if shapes is not None else [],
+            customHighlights=custom_highlights if custom_highlights is not None else {},
             movable={
                 'dests': dests,
                 'color': movable_color
@@ -232,9 +239,19 @@ class ChessBoard(QtWidgets.QWidget):
         new_orientation = chess.BLACK if self.side == chess.WHITE else chess.WHITE
         self.side = new_orientation
 
-    def update_board(self, fen: str, last_move: chess.Move = None):
+    def update_board(
+        self,
+        fen: str,
+        last_move: chess.Move = None,
+        shapes: list = None,
+        custom_highlights: dict = None,
+    ):
         self._internal_board.set_fen(fen)
-        self._update_view(last_move=last_move)
+        self._update_view(
+            last_move=last_move,
+            shapes=shapes,
+            custom_highlights=custom_highlights,
+        )
         # Match old board behavior: emit fenChanged
         self.fenChanged.emit(fen)
 

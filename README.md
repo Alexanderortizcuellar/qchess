@@ -44,8 +44,14 @@ A feature-rich, modern chess application built with Python, PyQt5, and Rust, fea
 - **Layout Memory**: Saves custom window state, dock arrangements, and splitter proportions across sessions using `QSettings`.
 - **On-Demand Dock Computation**: Heavy calculations for hidden docks are skipped automatically until the dock is toggled visible.
 
+### 🎯 Visual Annotations & PGN Shapes (`[%cal]` / `[%csl]`)
+- **Full PGN Arrow & Shape Annotation Support**:
+  - Automatically extracts and renders ChessBase / Lichess PGN arrow and square annotations (`[%cal ...]`, `[%csl ...]`).
+  - Supports colored directional arrows and square highlights/circles across all standard colors (Green, Red, Yellow, Blue, Orange, Cyan, Magenta, White, Black).
+  - Preserves, renders, and syncs annotations smoothly during game navigation, tree traversal, and position jumps.
+
 ### ♟️ Core Chess Capabilities
-- **High-Quality SVG Chessboard**: Responsive visuals, drag-and-drop movement, move highlights, and smooth piece animations.
+- **High-Quality SVG Chessboard (`gchessboard`)**: Responsive visuals, drag-and-drop movement, move highlights, visual shapes/arrows, and smooth piece animations.
 - **UCI Engine Integration**: Async Stockfish evaluation bar, multi-PV analysis, and customizable search parameters.
 - **Opening Explorer**: Integrated opening statistics and book move lookups.
 
@@ -101,6 +107,7 @@ python main.py
   - `move_manager.py`: Move tree navigation, SAN caching, and PGN state management.
   - `engine.py`: UCI Stockfish client.
   - `opening_explorer.py`: Opening explorer logic.
+- `gchessboard/`: High-performance vector & painter chessboard UI component submodule.
 - `scid-mgr/`: High-performance Rust SCID (v4/v5) and PGN database engine submodule.
 - `pgn-indexer/`: High-performance Rust PGN indexer submodule.
 
