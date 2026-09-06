@@ -704,18 +704,18 @@ class ChessApp(QMainWindow):
             else:
                 self.move_manager.redo(0)
 
-        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-        self.chessboard.update_board(
-            self.move_manager.get_board().fen(),
-            self.move_manager.current_node.move,
-            shapes=shapes,
-            custom_highlights=highlights,
-        )
-        self.display_pgn()
-    elif self.autoplay_timer.isActive():
-        self.autoplay_timer.stop()
-        self.autoplay_action.setChecked(False)
-        self.statusBar().showMessage("Autoplay Finished")
+            shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
+            self.chessboard.update_board(
+                self.move_manager.get_board().fen(),
+                self.move_manager.current_node.move,
+                shapes=shapes,
+                custom_highlights=highlights,
+            )
+            self.display_pgn()
+        elif self.autoplay_timer.isActive():
+            self.autoplay_timer.stop()
+            self.autoplay_action.setChecked(False)
+            self.statusBar().showMessage("Autoplay Finished")
 
     def backward(self):
         self.move_manager.undo()
