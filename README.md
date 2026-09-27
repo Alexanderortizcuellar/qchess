@@ -2,7 +2,15 @@
 
 A feature-rich, modern chess application built with Python, PyQt5, and Rust, featuring a two-window database hub architecture, instant SQLite-backed PGN indexing, UCI engine analysis, and an ultra-fast custom `QPainter` PGN browser.
 
-![Chessboard](assets/icon.png)
+![QChess](assets/icon.jpg)
+
+## Screenshots
+
+| Game Analysis & UCI Engine | Database Hub & Browser |
+|:---:|:---:|
+| ![Analysis Window](assets/screenshots/chessboard-window-pgn-engine.png) | ![Database Window](assets/screenshots/home-db-open.png) |
+
+> 📷 **For the complete visual walkthrough across all features (Opening Explorer, Continuation Lines, Endgame Classifier, Advanced Search, and Previews), see the [Screenshots Gallery](docs/SCREENSHOTS.md).**
 
 ## Key Features
 
