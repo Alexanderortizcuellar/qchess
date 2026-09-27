@@ -440,6 +440,14 @@ class ScidClient(QObject):
     def explain_dsl(self, query: str, callback: Optional[Callable[[dict], None]] = None) -> int:
         return self.send_request("explain_dsl", {"query": query}, callback)
 
+    def search(
+        self,
+        filter_dict: dict,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        """Unified multi-criteria search (combines headers, FEN, material, CQL)."""
+        return self.send_request("search", filter_dict, callback)
+
     def search_query(
         self,
         query: str,

@@ -1,14 +1,12 @@
-import chess
-from typing import Optional, Dict, Any, List
+from typing import Optional
 from PyQt5.QtCore import Qt, QTimer, QSettings
-from PyQt5.QtGui import QFont, QColor, QKeySequence
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox, QTabWidget, QWidget, QRadioButton,
     QGroupBox, QSpinBox, QButtonGroup, QMessageBox, QApplication,
-    QPlainTextEdit, QFrame, QScrollArea
+    QPlainTextEdit, QFrame
 )
-import qtawesome as qta
 
 try:
     from gui.widgets.board_widget import ChessBoardEditorWidget
@@ -58,13 +56,16 @@ class AdvancedSearchDialog(QDialog):
         self._val_timer.setInterval(400)
         self._val_timer.timeout.connect(self._validate_cql_query)
 
-        self._init_ui()
-        self._apply_dialog_styles()
-
-        if current_filter:
-            self.load_filter(current_filter)
-        else:
-            self.update_category_chips()
+        self._loading = True
+        try:
+            self._init_ui()
+            self._apply_dialog_styles()
+            if current_filter:
+                self.load_filter(current_filter)
+            else:
+                self.update_category_chips()
+        finally:
+            self._loading = False
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -542,7 +543,6 @@ class AdvancedSearchDialog(QDialog):
         query_layout.addWidget(self.val_frame)
 
         self.tabs.addTab(self.tab_query, "⚡ Query (CQL)")
-        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # ── 3. Bottom Dialog Action Buttons ───────────────────────
         btn_box = QHBoxLayout()
@@ -676,8 +676,16 @@ class AdvancedSearchDialog(QDialog):
             """)
 
     def update_category_chips(self):
-        """Cleanly highlights which search categories are actively included."""
-        pass
+        """Cleanly highlights which search categories are actively included with tab checkmarks."""
+        title_info = "🏷 Game Info" + ("  ✓" if self.chk_enable_info.isChecked() else "")
+        title_pos = "♟ Position" + ("  ✓" if self.chk_enable_pos.isChecked() else "")
+        title_mat = "⚖ Material" + ("  ✓" if self.chk_enable_mat.isChecked() else "")
+        title_query = "⚡ Query (CQL)" + ("  ✓" if self.chk_enable_query.isChecked() else "")
+
+        self.tabs.setTabText(0, title_info)
+        self.tabs.setTabText(1, title_pos)
+        self.tabs.setTabText(2, title_mat)
+        self.tabs.setTabText(3, title_query)
 
     def select_all_categories(self):
         self.chk_enable_info.setChecked(True)
@@ -1022,23 +1030,11 @@ class AdvancedSearchDialog(QDialog):
         finally:
             self._loading = False
 
-    def _on_tab_changed(self, idx: int):
-        if idx == 0:
-            self.chk_enable_info.setChecked(True)
-        elif idx == 1:
-            self.chk_enable_pos.setChecked(True)
-        elif idx == 2:
-            self.chk_enable_mat.setChecked(True)
-        elif idx == 3:
-            self.chk_enable_query.setChecked(True)
-        self.update_category_chips()
-
     def get_filter_dict(self) -> dict:
         f = {}
-        active_tab = self.tabs.currentIndex()
 
         # 1. Game Info Tab
-        if self.chk_enable_info.isChecked() or active_tab == 0:
+        if self.chk_enable_info.isChecked():
             p = self.in_player.text().strip()
             if p: f["player"] = p
             w = self.in_white.text().strip()
@@ -1062,7 +1058,7 @@ class AdvancedSearchDialog(QDialog):
             f["only_deleted"] = False
 
         # 2. Position Tab
-        if self.chk_enable_pos.isChecked() or active_tab == 1 or bool(self.in_fen.text().strip()):
+        if self.chk_enable_pos.isChecked():
             fen = self.in_fen.text().strip()
             if fen:
                 f["fen"] = fen
@@ -1071,7 +1067,7 @@ class AdvancedSearchDialog(QDialog):
                 f["max_ply"] = self.spin_max_ply.value()
 
         # 3. Material Tab
-        if self.chk_enable_mat.isChecked() or active_tab == 2:
+        if self.chk_enable_mat.isChecked():
             mat = {}
             def parse_val(cb):
                 t = cb.currentText()
@@ -1098,7 +1094,7 @@ class AdvancedSearchDialog(QDialog):
                 f["material"] = mat
 
         # 4. Query Language (CQL) Tab
-        if self.chk_enable_query.isChecked() or active_tab == 3 or bool(self.txt_query.toPlainText().strip()):
+        if self.chk_enable_query.isChecked():
             q_text = self.txt_query.toPlainText().strip()
             if q_text:
                 f["query"] = q_text

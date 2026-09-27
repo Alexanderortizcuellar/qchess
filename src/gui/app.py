@@ -1449,6 +1449,7 @@ class ChessApp(QMainWindow):
             if is_fast_navigation:
                 self.engine.stop_search()
             self.clear_pending_analysis()
+            self.analysis_widget.reset_lines()
 
             # Handle game over status indicator in status bar and eval bar
             board = self.chessboard._internal_board

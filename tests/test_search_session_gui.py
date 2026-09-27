@@ -64,6 +64,11 @@ def test_scid_client_search_methods():
         "search_id": "s_123"
     }, None)
 
+    # Test unified search
+    search_filter = {"white": "Kasparov", "result": "1-0", "eco": "B90"}
+    client.search(search_filter)
+    client.send_request.assert_called_with("search", search_filter, None)
+
     # Test search_cql
     client.search_cql("(match (position :piece count K == 1))")
     client.send_request.assert_called_with("search", {
@@ -83,6 +88,42 @@ def test_scid_client_search_methods():
     mat_filter = {"white_pawns": 8, "white_queens": 1, "black_queens": 0, "strict": True}
     client.search_material(mat_filter)
     client.send_request.assert_called_with("search_material", mat_filter, None)
+
+
+def test_advanced_search_dialog_category_isolation(qapp):
+    """Verify AdvancedSearchDialog isolates tabs without contaminating FEN into header searches."""
+    from gui.dialogs.advanced_search_dialog import AdvancedSearchDialog
+
+    dlg = AdvancedSearchDialog()
+
+    # Case 1: Only Game Info (Result: 1-0)
+    dlg.in_result.setCurrentText("1-0")
+    assert dlg.chk_enable_info.isChecked()
+    assert not dlg.chk_enable_pos.isChecked()
+    assert not dlg.chk_enable_mat.isChecked()
+    assert not dlg.chk_enable_query.isChecked()
+
+    f1 = dlg.get_filter_dict()
+    assert f1.get("result") == "1-0"
+    assert "fen" not in f1
+    assert "material" not in f1
+    assert "query" not in f1
+
+    # Case 2: Enable Position tab criteria as well
+    dlg.chk_enable_pos.setChecked(True)
+    dlg.in_fen.setText("8/8/8/8/3Q4/8/8/8")
+    f2 = dlg.get_filter_dict()
+    assert f2.get("result") == "1-0"
+    assert f2.get("fen") == "8/8/8/8/3Q4/8/8/8"
+    assert f2.get("match_mode") == "board_only"
+
+    # Case 3: Reset
+    dlg.reset_all()
+    f3 = dlg.get_filter_dict()
+    assert "result" not in f3
+    assert "fen" not in f3
+    assert not dlg.chk_enable_info.isChecked()
+    assert not dlg.chk_enable_pos.isChecked()
 
 
 def test_game_list_table_columns_and_match_metadata(qapp):

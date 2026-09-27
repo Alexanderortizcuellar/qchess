@@ -675,90 +675,33 @@ class HomeWindow(QMainWindow):
                 self.progress_bar.hide()
                 return
 
-        # ── Option A: CQL Language Search ────────────────────────────
-        if filter_dict.get("query"):
-            def on_cql_resp(resp: dict):
-                self.progress_bar.hide()
-                if resp.get("status") == "ok":
-                    data = resp.get("data", {})
-                    search_id = data.get("search_id")
-                    matched = data.get("matched_count", 0)
-                    dur = data.get("duration_ms", 0)
-                    self.game_table.load_search_session(search_id, matched, filter_dict)
-                    self.btn_clear_search.show()
-                    self.status_bar.showMessage(f"CQL Search complete: {matched:,} games matched ({dur}ms).", 8000)
+        active_filters = dict(filter_dict) if filter_dict else {}
+        quick_text = self.game_table.filter_edit.text().strip()
+        if quick_text and "player" not in active_filters:
+            active_filters["player"] = quick_text
+
+        def on_search_resp(resp: dict):
+            self.progress_bar.hide()
+            if resp.get("status") == "ok":
+                data = resp.get("data", {})
+                search_id = data.get("search_id")
+                matched = data.get("matched_count", data.get("total", 0))
+                dur = data.get("duration_ms", 0)
+                if search_id:
+                    self.game_table.load_search_session(search_id, matched, active_filters)
                 else:
-                    err = resp.get("error", "Unknown error")
-                    self.status_bar.showMessage(f"CQL Search failed: {err}", 8000)
+                    self.game_table.load_database(matched, active_filters)
+                self.btn_clear_search.show()
+                self.status_bar.showMessage(f"Search complete: {matched:,} games matched ({dur}ms).", 8000)
+            else:
+                err = resp.get("error", "Unknown error")
+                self.status_bar.showMessage(f"Search failed: {err}", 8000)
 
-            self.scid_client.search_cql(filter_dict["query"], callback=on_cql_resp)
-
-        # ── Option B: Direct Position / FEN Search ───────────────────
-        elif filter_dict.get("fen"):
-            def on_pos_resp(resp: dict):
-                self.progress_bar.hide()
-                if resp.get("status") == "ok":
-                    data = resp.get("data", {})
-                    search_id = data.get("search_id")
-                    matched = data.get("matched_count", 0)
-                    dur = data.get("duration_ms", 0)
-                    self.game_table.load_search_session(search_id, matched, filter_dict)
-                    self.btn_clear_search.show()
-                    self.status_bar.showMessage(f"Position Search complete: {matched:,} games matched ({dur}ms).", 8000)
-                else:
-                    err = resp.get("error", "Unknown error")
-                    self.status_bar.showMessage(f"Position Search failed: {err}", 8000)
-
-            self.scid_client.search_position(
-                fen=filter_dict["fen"],
-                turn=filter_dict.get("turn"),
-                match_mode=filter_dict.get("match_mode"),
-                max_ply=filter_dict.get("max_ply"),
-                callback=on_pos_resp,
-            )
-
-        # ── Option C: Material Search ─────────────────────────────────
-        elif filter_dict.get("material"):
-            def on_mat_resp(resp: dict):
-                self.progress_bar.hide()
-                if resp.get("status") == "ok":
-                    data = resp.get("data", {})
-                    search_id = data.get("search_id")
-                    matched = data.get("matched_count", 0)
-                    dur = data.get("duration_ms", 0)
-                    self.game_table.load_search_session(search_id, matched, filter_dict)
-                    self.btn_clear_search.show()
-                    self.status_bar.showMessage(f"Material Search complete: {matched:,} games matched ({dur}ms).", 8000)
-                else:
-                    err = resp.get("error", "Unknown error")
-                    self.status_bar.showMessage(f"Material Search failed: {err}", 8000)
-
-            self.scid_client.search_material(filter_dict["material"], callback=on_mat_resp)
-
-        # ── Option D: Standard Game Info / Header Filter ─────────────
+        # Pure CQL query vs Unified Multi-Criteria search
+        if active_filters.get("query") and len(active_filters) == 1:
+            self.scid_client.search_cql(active_filters["query"], callback=on_search_resp)
         else:
-            def on_query_finished(resp: dict):
-                self.progress_bar.hide()
-                if resp.get("status") == "ok":
-                    data = resp.get("data", {})
-                    total = data.get("total", 0)
-                    self.game_table.load_database(total, active_filters)
-                    if total > 0:
-                        self.game_table.table.selectRow(0)
-                    self.btn_clear_search.show()
-                    self.status_bar.showMessage(f"Search complete: {total:,} games matched.", 8000)
-                else:
-                    err = resp.get("error", "Unknown error")
-                    self.status_bar.showMessage(f"Search failed: {err}", 8000)
-
-            active_filters = dict(filter_dict) if filter_dict else {}
-            quick_text = self.game_table.filter_edit.text().strip()
-            if quick_text and "player" not in active_filters:
-                active_filters["player"] = quick_text
-
-            self.btn_clear_search.show()
-            self.game_table.model.set_filters(active_filters)
-            self.scid_client.query_games(page=0, page_size=self.game_table.model.CHUNK_SIZE, filter_dict=active_filters, callback=on_query_finished)
+            self.scid_client.search(active_filters, callback=on_search_resp)
 
     def _on_filter_state_changed(self, active: bool):
         if hasattr(self, "btn_clear_search"):

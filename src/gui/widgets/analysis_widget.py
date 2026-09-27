@@ -509,21 +509,29 @@ class AnalysisWidget(QWidget):
         self.depth_label.setText("starting...")
 
     def render_lines(self):
-        if not self.analysis_lines:
+        # Filter out lines from stale FENs or exceeding multipv limit
+        valid_lines = {}
+        for k, v in self.analysis_lines.items():
+            if k <= self.multipv_limit:
+                line_fen = v.get("fen")
+                if not line_fen or not self.last_board_fen or line_fen == self.last_board_fen:
+                    valid_lines[k] = v
+
+        if not valid_lines:
             if not self.check_analysis.isChecked():
                 self.lines_view.set_placeholder("Enable engine for analysis...")
+            else:
+                self.lines_view.set_placeholder("Analyzing position...")
+            self.lines_view.set_lines([])
             return
 
-        sorted_indices = sorted(self.analysis_lines.keys())
+        sorted_indices = sorted(valid_lines.keys())
         board = chess.Board(self.last_board_fen) if self.last_board_fen else None
         turn = board.turn if board else chess.WHITE
 
         rendered_lines = []
         for idx in sorted_indices:
-            if idx > self.multipv_limit:
-                continue
-
-            data = self.analysis_lines[idx]
+            data = valid_lines[idx]
             score_str, raw_val, is_mate = self.format_score_meta(data, turn=turn)
             pv_moves = data.get("pv", [])
 
@@ -583,13 +591,16 @@ class AnalysisWidget(QWidget):
 
     def update_analysis(self, info: dict, board_fen: str = None):
         """Update analysis lines with new info."""
+        if board_fen:
+            if self.last_board_fen != board_fen:
+                self.analysis_lines.clear()
+            self.last_board_fen = board_fen
+
         self.analysis_lines = {k: v for k, v in self.analysis_lines.items() if k <= self.multipv_limit}
 
         multipv = info.get("multipv", 1)
         if multipv <= self.multipv_limit:
             self.analysis_lines[multipv] = info
-        if board_fen:
-            self.last_board_fen = board_fen
             
         self.render_lines()
         
@@ -602,6 +613,8 @@ class AnalysisWidget(QWidget):
     def update_analysis_batch(self, infos: list, board_fen: str = None):
         """Update multiple analysis lines and render once."""
         if board_fen:
+            if self.last_board_fen != board_fen:
+                self.analysis_lines.clear()
             self.last_board_fen = board_fen
 
         self.analysis_lines = {k: v for k, v in self.analysis_lines.items() if k <= self.multipv_limit}
