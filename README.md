@@ -109,7 +109,6 @@ python main.py
   - `opening_explorer.py`: Opening explorer logic.
 - `gchessboard/`: High-performance vector & painter chessboard UI component submodule.
 - `scid-mgr/`: High-performance Rust SCID (v4/v5) and PGN database engine submodule.
-- `pgn-indexer/`: High-performance Rust PGN indexer submodule.
 
 ## Technical Stack
 

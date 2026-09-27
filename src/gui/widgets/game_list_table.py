@@ -1,4 +1,5 @@
 from typing import Optional, Dict, Any, Set
+from collections import OrderedDict
 from PyQt5 import QtCore, QtWidgets, QtGui
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt5.QtGui import QColor, QFont
@@ -38,20 +39,26 @@ class GameListTableModel(QAbstractTableModel):
         8: "event",
         9: "site",
         10: "round",
+        11: "status",
     }
 
     CHUNK_SIZE = 100
+    MAX_CACHED_CHUNKS = 50  # Cap cache at 5,000 rows (~2-3 MB max memory)
     stats_updated = pyqtSignal(int, int)  # total_games, loaded_games
+    sort_started = pyqtSignal()
+    sort_finished = pyqtSignal()
 
     def __init__(self, client: Optional[ScidClient] = None, parent=None):
         super().__init__(parent)
         self.client = client
         self.total_count = 0
+        self.search_id: Optional[str] = None
         self.filters: Dict[str, Any] = {}
-        self.cached_chunks: Dict[int, list] = {}
+        self.cached_chunks: OrderedDict[int, list] = OrderedDict()
         self.in_flight_pages: Set[int] = set()
         self.sort_col: Optional[int] = None
         self.sort_asc: bool = True
+        self.is_sorting: bool = False
 
         if self.client:
             self.client.response_received.connect(self.on_backend_response)
@@ -66,9 +73,10 @@ class GameListTableModel(QAbstractTableModel):
         if self.client:
             self.client.response_received.connect(self.on_backend_response)
 
-    def set_db(self, total_count: int, filters: Optional[dict] = None):
+    def set_db(self, total_count: int, filters: Optional[dict] = None, search_id: Optional[str] = None):
         self.beginResetModel()
         self.total_count = total_count
+        self.search_id = search_id
         self.filters = dict(filters) if filters else {}
         self.cached_chunks.clear()
         self.in_flight_pages.clear()
@@ -93,10 +101,22 @@ class GameListTableModel(QAbstractTableModel):
             return str(section + 1)
         return None
 
+    def has_active_filter(self) -> bool:
+        if self.search_id:
+            return True
+        SORT_KEYS = {"sort_by", "sort_asc", "sort_direction", "include_deleted", "only_deleted"}
+        return any(
+            k not in SORT_KEYS and bool(v)
+            for k, v in self.filters.items()
+        ) or bool(self.filters.get("only_deleted", False))
+
     def toggle_sort_column(self, col: int, order: Optional[Qt.SortOrder] = None):
         if col not in self.COLUMN_SORT_FIELDS:
             return
         
+        self.is_sorting = True
+        self.sort_started.emit()
+
         if order is not None:
             self.sort_col = col
             self.sort_asc = (order == Qt.AscendingOrder)
@@ -123,6 +143,8 @@ class GameListTableModel(QAbstractTableModel):
         offset_in_page = row % self.CHUNK_SIZE
 
         chunk = self.cached_chunks.get(page)
+        if chunk is not None:
+            self.cached_chunks.move_to_end(page)
         game_item = chunk[offset_in_page] if (chunk and offset_in_page < len(chunk)) else None
 
         # Lazy load chunk if missing
@@ -192,6 +214,8 @@ class GameListTableModel(QAbstractTableModel):
         page = row // self.CHUNK_SIZE
         offset = row % self.CHUNK_SIZE
         chunk = self.cached_chunks.get(page)
+        if chunk is not None:
+            self.cached_chunks.move_to_end(page)
         if chunk and offset < len(chunk):
             return chunk[offset]
         return None
@@ -203,14 +227,17 @@ class GameListTableModel(QAbstractTableModel):
         self.client.query_games(
             page=page,
             page_size=self.CHUNK_SIZE,
-            filter_dict=self.filters,
+            filter_dict=self.filters if not self.search_id else None,
             sort_by=self.filters.get("sort_by"),
             sort_direction=self.filters.get("sort_direction"),
+            sort_asc=self.sort_asc,
+            search_id=self.search_id,
         )
 
     def set_filters(self, filters: dict):
         self.beginResetModel()
         self.filters = dict(filters)
+        self.search_id = None
         self.cached_chunks.clear()
         self.in_flight_pages.clear()
         self.endResetModel()
@@ -232,6 +259,7 @@ class GameListTableModel(QAbstractTableModel):
         self.cached_chunks.clear()
         self.in_flight_pages.clear()
         self.total_count = 0
+        self.search_id = None
         self.endResetModel()
         self.stats_updated.emit(0, 0)
 
@@ -245,11 +273,22 @@ class GameListTableModel(QAbstractTableModel):
         page = resp_data.get("page", 0)
         total = resp_data.get("total", 0)
         games = resp_data.get("games", [])
+        if "search_id" in resp_data:
+            self.search_id = resp_data.get("search_id")
 
         if page in self.in_flight_pages:
             self.in_flight_pages.remove(page)
 
+        if getattr(self, "is_sorting", False):
+            self.is_sorting = False
+            self.sort_finished.emit()
+
         self.cached_chunks[page] = games
+        self.cached_chunks.move_to_end(page)
+
+        # Evict oldest chunks if exceeding capacity
+        while len(self.cached_chunks) > self.MAX_CACHED_CHUNKS:
+            self.cached_chunks.popitem(last=False)
 
         if total != self.total_count:
             self.beginResetModel()
@@ -286,6 +325,7 @@ class GameListTableWidget(QtWidgets.QWidget):
     loadFinished = QtCore.pyqtSignal(int)
     gameDeleted = QtCore.pyqtSignal(int)
     gameUndeleted = QtCore.pyqtSignal(int)
+    filterStateChanged = QtCore.pyqtSignal(bool)
 
     def __init__(self, client: Optional[ScidClient] = None, parent=None):
         super().__init__(parent)
@@ -302,7 +342,6 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setSortingEnabled(True)
-        self.table.setStyleSheet("QTableView::item { padding: 1px 4px; }")
 
         # Table row context menu
         self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -317,6 +356,9 @@ class GameListTableWidget(QtWidgets.QWidget):
         layout.addWidget(self.info_label)
 
         self.model = GameListTableModel(self.client, self)
+        self.model.stats_updated.connect(self._on_stats_updated)
+        self.model.sort_started.connect(self._on_sort_started)
+        self.model.sort_finished.connect(self._on_sort_finished)
         self.table.setModel(self.model)
 
         # Header configuration
@@ -332,6 +374,14 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.filter_edit.returnPressed.connect(self._on_quick_filter_applied)
         self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+
+    def _on_stats_updated(self, total_count: int, loaded_count: int):
+        has_filter = self.model.has_active_filter()
+        if has_filter:
+            self.set_info_text(f"{total_count:,} games matched (Filter Active)")
+        else:
+            self.set_info_text(f"{total_count:,} games")
+        self.filterStateChanged.emit(has_filter)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent):
         if event.key() == QtCore.Qt.Key_Delete:
@@ -426,9 +476,33 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.restore_header_state()
         self.loadFinished.emit(total_games)
 
+    def load_search_session(self, search_id: str, total_matches: int, filter_dict: Optional[dict] = None):
+        """Load paginated search session results into the virtual table."""
+        self.model.set_db(total_matches, filter_dict, search_id=search_id)
+        self.restore_header_state()
+        self.loadFinished.emit(total_matches)
+        if total_matches > 0:
+            self.table.selectRow(0)
+
+    def _on_sort_started(self):
+        if not getattr(self, "_is_sorting_cursor", False):
+            self._is_sorting_cursor = True
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            QtCore.QTimer.singleShot(4000, self._on_sort_finished)
+
+    def _on_sort_finished(self):
+        if getattr(self, "_is_sorting_cursor", False):
+            self._is_sorting_cursor = False
+            QtWidgets.QApplication.restoreOverrideCursor()
+
     def clear(self):
+        self._on_sort_finished()
         self.model.clear()
         self.set_info_text("")
+
+    def closeEvent(self, event):
+        self._on_sort_finished()
+        super().closeEvent(event)
 
     def set_info_text(self, text: str):
         self.info_label.setText(str(text))
@@ -451,17 +525,52 @@ class GameListTableWidget(QtWidgets.QWidget):
             return
 
         row_idx = proxy_index.row()
-        game_item = self.model.get_game_at(row_idx) or {}
-        game_id = game_item.get("id", row_idx)
-        if game_id is None:
-            game_id = row_idx
+        self.load_game_at_row(row_idx)
 
+    def load_game_at_row(self, row_idx: int):
+        """Loads game at specific row index and emits gameSelected signal."""
+        if not self.client or not self.client.is_running():
+            return
+        if row_idx < 0 or row_idx >= self.model.total_count:
+            return
+
+        model_index = self.model.index(row_idx, 0)
+        if model_index.isValid():
+            self.table.selectRow(row_idx)
+            self.table.scrollTo(model_index)
+
+        game_item = self.model.get_game_at(row_idx)
+        if game_item:
+            game_id = game_item.get("id", row_idx)
+            self._fetch_and_emit_game(row_idx, game_id, game_item)
+        else:
+            page = row_idx // self.model.CHUNK_SIZE
+            def on_chunk_loaded(resp: dict):
+                if resp.get("status") == "ok":
+                    self.model.on_backend_response(resp)
+                item = self.model.get_game_at(row_idx) or {}
+                gid = item.get("id", row_idx)
+                self._fetch_and_emit_game(row_idx, gid, item)
+            self.client.query_games(
+                page=page,
+                page_size=self.model.CHUNK_SIZE,
+                filter_dict=self.model.filters if not self.model.search_id else None,
+                sort_by=self.model.filters.get("sort_by"),
+                sort_direction=self.model.filters.get("sort_direction"),
+                sort_asc=self.model.sort_asc,
+                search_id=self.model.search_id,
+                callback=on_chunk_loaded,
+            )
+
+    def _fetch_and_emit_game(self, row_idx: int, game_id: int, game_item: dict):
         def on_pgn_received(resp: dict):
             if resp.get("status") == "ok":
                 pgn_text = resp.get("data", {}).get("pgn", "")
                 display_id = game_item.get("id", game_id)
                 if isinstance(display_id, int):
                     display_id = display_id + 1
+                matching_plies = game_item.get("matching_plies") or []
+                match_count = game_item.get("match_count", len(matching_plies))
                 payload = {
                     "ID": str(display_id),
                     "White": game_item.get("white", "?"),
@@ -475,7 +584,12 @@ class GameListTableWidget(QtWidgets.QWidget):
                     "Site": game_item.get("site", ""),
                     "Round": str(game_item.get("round", "")),
                     "PGN": pgn_text,
+                    "matching_plies": matching_plies,
+                    "match_count": match_count,
+                    "_matching_plies": matching_plies,
                     "_id": game_id,
+                    "_row_idx": row_idx,
+                    "_total_rows": self.model.total_count,
                 }
                 self.gameSelected.emit(payload)
 

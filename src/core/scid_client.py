@@ -1,11 +1,12 @@
 import os
 import sys
 import json
+import time
 import queue
 import shutil
 import subprocess
 import threading
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -49,6 +50,9 @@ class ScidClient(QObject):
     import_progress = pyqtSignal(dict)
     export_progress = pyqtSignal(dict)
     pos_index_progress = pyqtSignal(dict)
+    tree_index_progress = pyqtSignal(dict)
+    continuations_progress = pyqtSignal(dict)
+    endgame_index_progress = pyqtSignal(dict)
     process_error = pyqtSignal(str)
     process_stopped = pyqtSignal()
 
@@ -60,19 +64,35 @@ class ScidClient(QObject):
         self.write_queue: queue.Queue = queue.Queue()
         self.running = False
         self.request_id = 0
-        self.pending_callbacks: Dict[int, Callable[[dict], None]] = {}
+        self.pending_callbacks: Dict[int, Tuple[Callable[[dict], None], float]] = {}
 
         # Safely dispatch pending callbacks on the main GUI thread via Qt signal delivery
         self.response_received.connect(self._dispatch_response_on_main_thread)
 
+    def _prune_stale_callbacks(self, timeout_sec: float = 60.0):
+        """Remove pending callbacks older than timeout to prevent closure memory leaks."""
+        now = time.time()
+        stale_keys = [
+            req_id for req_id, (_, ts) in self.pending_callbacks.items()
+            if now - ts > timeout_sec
+        ]
+        for req_id in stale_keys:
+            del self.pending_callbacks[req_id]
+
     def _dispatch_response_on_main_thread(self, data: dict):
+        self._prune_stale_callbacks()
         req_id = data.get("id")
         if req_id in self.pending_callbacks:
-            cb = self.pending_callbacks.pop(req_id)
+            cb, _ = self.pending_callbacks.pop(req_id)
             try:
                 cb(data)
             except Exception as e:
                 print(f"[ScidClient] Error in callback for req {req_id}: {e}")
+
+    def cancel_callback(self, req_id: Optional[int]):
+        """Cancel a pending callback by request ID."""
+        if req_id is not None:
+            self.pending_callbacks.pop(req_id, None)
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
@@ -141,6 +161,12 @@ class ScidClient(QObject):
                     self.export_progress.emit(data.get("data", {}))
                 elif event_name == "build_pos_index_progress":
                     self.pos_index_progress.emit(data.get("data", {}))
+                elif event_name == "build_tree_progress":
+                    self.tree_index_progress.emit(data.get("data", {}))
+                elif event_name == "build_continuations_progress":
+                    self.continuations_progress.emit(data.get("data", {}))
+                elif event_name == "build_endgames_progress":
+                    self.endgame_index_progress.emit(data.get("data", {}))
                 else:
                     self.response_received.emit(data)
             except json.JSONDecodeError as e:
@@ -187,7 +213,7 @@ class ScidClient(QObject):
             req_payload.update(params)
 
         if callback:
-            self.pending_callbacks[req_id] = callback
+            self.pending_callbacks[req_id] = (callback, time.time())
 
         msg = json.dumps(req_payload) + "\n"
         self.write_queue.put(msg)
@@ -209,18 +235,25 @@ class ScidClient(QObject):
         filter_dict: Optional[dict] = None,
         sort_by: Optional[str] = None,
         sort_direction: Optional[str] = None,
+        sort_asc: Optional[bool] = None,
+        search_id: Optional[str] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {
             "page": page,
             "page_size": page_size,
         }
+        if search_id:
+            params["search_id"] = search_id
         if filter_dict:
             params.update(filter_dict)
             params["filter"] = filter_dict
         if sort_by:
             params["sort_by"] = sort_by
-        if sort_direction:
+        if sort_asc is not None:
+            params["sort_asc"] = sort_asc
+            params["sort_direction"] = "ASC" if sort_asc else "DESC"
+        elif sort_direction:
             params["sort_direction"] = sort_direction
             params["sort_asc"] = (sort_direction.upper() == "ASC")
 
@@ -265,16 +298,32 @@ class ScidClient(QObject):
     def build_pos_index(
         self,
         max_ply: int = 24,
+        min_games: int = 1,
         threads: Optional[int] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
-        params: Dict[str, Any] = {"max_ply": max_ply}
+        params: Dict[str, Any] = {"max_ply": max_ply, "min_games": min_games}
         if threads and threads > 0:
             params["threads"] = threads
         return self.send_request("build_pos_index", params, callback)
 
+    def build_tree(
+        self,
+        max_ply: int = 24,
+        min_games: int = 1,
+        threads: Optional[int] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {"max_ply": max_ply, "min_games": min_games}
+        if threads and threads > 0:
+            params["threads"] = threads
+        return self.send_request("build_tree", params, callback)
+
     def pos_index_status(self, callback: Optional[Callable[[dict], None]] = None) -> int:
         return self.send_request("pos_index_status", {}, callback)
+
+    def tree_index_status(self, callback: Optional[Callable[[dict], None]] = None) -> int:
+        return self.send_request("tree_index_status", {}, callback)
 
     def set_threads(self, threads: int, callback: Optional[Callable[[dict], None]] = None) -> int:
         return self.send_request("set_threads", {"threads": threads}, callback)
@@ -285,23 +334,130 @@ class ScidClient(QObject):
     def search_position(
         self,
         fen: str,
+        turn: Optional[str] = None,
+        match_mode: Optional[str] = None,
         max_ply: Optional[int] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {"fen": fen}
+        if turn:
+            params["turn"] = turn
+        if match_mode:
+            params["match_mode"] = match_mode
         if max_ply is not None:
             params["max_ply"] = max_ply
         return self.send_request("search_position", params, callback)
 
+    def search_material(
+        self,
+        filter_dict: dict,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        return self.send_request("search_material", filter_dict, callback)
+
     def opening_tree(
         self,
         fen: Optional[str] = None,
+        filters: Optional[dict] = None,
+        max_sample_games: Optional[int] = None,
+        include_sample_games: bool = True,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {
+            "include_sample_games": include_sample_games,
+        }
+        if fen:
+            params["fen"] = fen
+        if filters:
+            params["filter"] = filters
+        if max_sample_games is not None:
+            params["max_sample_games"] = max_sample_games
+        return self.send_request("opening_tree", params, callback)
+
+    def continuations(
+        self,
+        fen: Optional[str] = None,
+        max_depth: int = 8,
+        max_lines: int = 10,
+        min_games: int = 1,
+        min_percentage: float = 0.0,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {
+            "max_depth": max_depth,
+            "max_lines": max_lines,
+            "min_games": min_games,
+            "min_percentage": min_percentage,
+        }
+        if fen:
+            params["fen"] = fen
+        return self.send_request("continuations", params, callback)
+
+    def build_continuations(
+        self,
+        max_ply: int = 16,
+        min_games: int = 1,
+        threads: Optional[int] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {"max_ply": max_ply, "min_games": min_games}
+        if threads and threads > 0:
+            params["threads"] = threads
+        return self.send_request("build_continuations", params, callback)
+
+    def endgames(
+        self,
+        fen: Optional[str] = None,
+        category: Optional[str] = None,
+        feature_id: Optional[str] = None,
+        max_samples: int = 20,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {
+            "max_samples": max_samples,
+        }
+        if fen:
+            params["fen"] = fen
+        if category:
+            params["category"] = category
+        if feature_id:
+            params["feature_id"] = feature_id
+        return self.send_request("endgames", params, callback)
+
+    def build_endgames(
+        self,
+        output_path: Optional[str] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {}
-        if fen:
-            params["fen"] = fen
-        return self.send_request("opening_tree", params, callback)
+        if output_path:
+            params["output_path"] = output_path
+        return self.send_request("build_endgames", params, callback)
+
+    def validate_dsl(self, query: str, callback: Optional[Callable[[dict], None]] = None) -> int:
+        return self.send_request("validate_dsl", {"query": query}, callback)
+
+    def explain_dsl(self, query: str, callback: Optional[Callable[[dict], None]] = None) -> int:
+        return self.send_request("explain_dsl", {"query": query}, callback)
+
+    def search_query(
+        self,
+        query: str,
+        pgn_path: Optional[str] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        params: Dict[str, Any] = {"query": query}
+        if pgn_path:
+            params["pgn_path"] = pgn_path
+        return self.send_request("search", params, callback)
+
+    def search_cql(
+        self,
+        query: str,
+        pgn_path: Optional[str] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        return self.search_query(query, pgn_path=pgn_path, callback=callback)
 
     def stop(self):
         if not self.is_running():
@@ -313,6 +469,7 @@ class ScidClient(QObject):
             pass
 
         self.running = False
+        self.pending_callbacks.clear()
         self.write_queue.put(None)
 
         if self.process:

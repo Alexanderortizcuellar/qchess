@@ -8,10 +8,12 @@ class ChessEngine(QtCore.QProcess):
     moveFound = QtCore.pyqtSignal(str)
     depthChanged = QtCore.pyqtSignal(int)
     analysisUpdated = QtCore.pyqtSignal(dict)  # Emits dict with MultiPV info
+    engineNameChanged = QtCore.pyqtSignal(str)
 
     def __init__(self, engine_path="stockfish", parent=None):
         super().__init__(parent)
         self.engine_path = engine_path
+        self.engine_name = self._infer_name_from_path(engine_path)
         self.engine_config = {
             "threads": 1,
             "hash": 16,
@@ -27,6 +29,16 @@ class ChessEngine(QtCore.QProcess):
         self.next_mode = "depth"
         self.next_options = {"depth": 20}
 
+    @staticmethod
+    def _infer_name_from_path(path: str) -> str:
+        if not path:
+            return "Engine"
+        import os
+        base = os.path.splitext(os.path.basename(path))[0]
+        if not base or base.lower() == "stockfish":
+            return "Stockfish"
+        return base.replace("-", " ").replace("_", " ").title()
+
     def read_data(self):
         try:
             raw_data = self.readAllStandardOutput().data().decode("utf-8", errors="replace")
@@ -35,8 +47,11 @@ class ChessEngine(QtCore.QProcess):
 
         for line in raw_data.splitlines():
             line = line.strip()
-            if not line:
-                continue
+            if line.startswith("id name "):
+                name = line[len("id name "):].strip()
+                if name:
+                    self.engine_name = name
+                    self.engineNameChanged.emit(name)
 
             if "uciok" in line:
                 self.send_command("isready")
@@ -107,6 +122,17 @@ class ChessEngine(QtCore.QProcess):
     def set_option(self, name: str, value: Any):
         self.send_command(f"setoption name {name} value {value}")
 
+    def set_multipv(self, count: int):
+        """Dynamically update MultiPV, stopping search and syncing cleanly with UCI engine."""
+        self.engine_config["multipv"] = count
+        if not self.is_running():
+            return
+        
+        # Stop current search and apply option
+        self.send_command("stop")
+        self.send_command(f"setoption name MultiPV value {count}")
+        self.send_command("isready")
+
     def ensure_started(self) -> bool:
         """Start the engine process if it is not already running and configure UCI."""
         if self.is_running():
@@ -176,7 +202,15 @@ class ChessEngine(QtCore.QProcess):
         if was_running:
             self.quit()
 
-        self.engine_path = settings.get("path", self.engine_path)
+        if "path" in settings and settings["path"]:
+            new_path = settings["path"]
+            if new_path != self.engine_path:
+                self.engine_path = new_path
+                self.engine_name = self._infer_name_from_path(new_path)
+                self.engineNameChanged.emit(self.engine_name)
+        elif "path" in settings:
+            self.engine_path = settings.get("path", self.engine_path)
+
         self.engine_config.update(settings)
 
         if was_running:

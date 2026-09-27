@@ -43,10 +43,6 @@ from core.repertoire_db import RepertoireRepository, RepertoireNode
 NODE_ID_ROLE   = Qt.UserRole
 NODE_TYPE_ROLE = Qt.UserRole + 1
 
-# Colors aligned with chess-memorization & app QSS palette
-FOLDER_COLOR     = QColor("#fb923c")   # warm amber/orange matching chess-memorization
-REPERTOIRE_COLOR = QColor("#e5e7eb")   # clean light text matching chess-memorization
-
 
 # ---------------------------------------------------------------------------
 # Custom draggable tree view with database persistence
@@ -114,21 +110,39 @@ class MoveFolderDialog(QDialog):
         self.setWindowTitle("Move To Folder")
         self.setMinimumWidth(360)
 
-        self.setStyleSheet("""
-            QDialog { background: #262421; color: #bababa; }
-            QLabel  { color: #8b8987; font-weight: bold; }
-            QComboBox {
-                background: #312e2b; color: #ffffff;
-                border: 1px solid #403d39; border-radius: 3px;
-                padding: 5px; font-size: 13px;
-            }
-            QPushButton {
-                background: #312e2b; color: #ffffff;
-                border: 1px solid #403d39; border-radius: 3px; padding: 5px 14px;
-            }
-            QPushButton:hover { background: #383531; border-color: #504d48; }
-            QPushButton:pressed { background: #21201d; }
-        """)
+        is_dark = getattr(parent, "is_dark", True)
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog { background: #262421; color: #bababa; }
+                QLabel  { color: #8b8987; font-weight: bold; }
+                QComboBox {
+                    background: #312e2b; color: #ffffff;
+                    border: 1px solid #403d39; border-radius: 3px;
+                    padding: 5px; font-size: 13px;
+                }
+                QPushButton {
+                    background: #312e2b; color: #ffffff;
+                    border: 1px solid #403d39; border-radius: 3px; padding: 5px 14px;
+                }
+                QPushButton:hover { background: #383531; border-color: #504d48; }
+                QPushButton:pressed { background: #21201d; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog { background: #ffffff; color: #0f172a; }
+                QLabel  { color: #475569; font-weight: bold; }
+                QComboBox {
+                    background: #f8fafc; color: #0f172a;
+                    border: 1px solid #cbd5e1; border-radius: 3px;
+                    padding: 5px; font-size: 13px;
+                }
+                QPushButton {
+                    background: #ffffff; color: #0f172a;
+                    border: 1px solid #cbd5e1; border-radius: 3px; padding: 5px 14px;
+                }
+                QPushButton:hover { background: #f1f5f9; border-color: #94a3b8; }
+                QPushButton:pressed { background: #e2e8f0; }
+            """)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -184,6 +198,8 @@ class RepertoireTreeWidget(QWidget):
     def __init__(self, repo: RepertoireRepository, parent=None):
         super().__init__(parent)
         self._repo = repo
+        self.is_dark = True
+        self.buttons = []
         self._build_ui()
         self.refresh()
 
@@ -199,8 +215,8 @@ class RepertoireTreeWidget(QWidget):
         root_layout.setSpacing(0)
 
         # Header bar
-        header = self._build_header()
-        root_layout.addWidget(header)
+        self.header_widget = self._build_header()
+        root_layout.addWidget(self.header_widget)
 
         # Tree
         self.tree = _RepertoireTreeView(self)
@@ -221,15 +237,15 @@ class RepertoireTreeWidget(QWidget):
         root_layout.addWidget(self.tree, 1)
 
         # Bottom toolbar
-        bottom = self._build_bottom_bar()
-        root_layout.addWidget(bottom)
+        self.bottom_widget = self._build_bottom_bar()
+        root_layout.addWidget(self.bottom_widget)
 
     def _build_header(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(36)
-        w.setStyleSheet("""
-            QWidget { background: #21201d; border-bottom: 1px solid #312e2b; }
-        """)
+        hdr_bg = "#21201d" if self.is_dark else "#f1f5f9"
+        hdr_border = "#312e2b" if self.is_dark else "#cbd5e1"
+        w.setStyleSheet(f"QWidget {{ background: {hdr_bg}; border-bottom: 1px solid {hdr_border}; }}")
         layout = QHBoxLayout(w)
         layout.setContentsMargins(6, 4, 6, 4)
         layout.setSpacing(4)
@@ -240,25 +256,30 @@ class RepertoireTreeWidget(QWidget):
         self.search_edit.setPlaceholderText("Search...")
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setFixedHeight(24)
-        self.search_edit.setStyleSheet("""
-            QLineEdit {
-                background-color: #262421;
-                color: #e5e7eb;
-                border: 1px solid #403d39;
-                border-radius: 3px;
+        search_bg = "#262421" if self.is_dark else "#ffffff"
+        search_color = "#e5e7eb" if self.is_dark else "#0f172a"
+        search_border = "#403d39" if self.is_dark else "#cbd5e1"
+        self.search_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {search_bg};
+                color: {search_color};
+                border: 1px solid {search_border};
+                border-radius: 4px;
                 padding: 1px 6px;
                 font-size: 11px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #e6912c;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid #2563eb;
+            }}
         """)
         self.search_edit.textChanged.connect(self._on_search_changed)
         layout.addWidget(self.search_edit, 1, Qt.AlignVCenter)
 
+        icon_color = "#a9aea7" if self.is_dark else "#475569"
+
         # New folder button
         btn_folder = QPushButton()
-        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color="#a9aea7"))
+        btn_folder.setIcon(qta.icon("fa5s.folder-plus", color=icon_color))
         btn_folder.setIconSize(QSize(14, 14))
         btn_folder.setToolTip("New Folder")
         btn_folder.setFixedSize(24, 24)
@@ -266,10 +287,11 @@ class RepertoireTreeWidget(QWidget):
         btn_folder.setStyleSheet(self._icon_button_style())
         btn_folder.clicked.connect(self._new_folder_at_root)
         layout.addWidget(btn_folder, 0, Qt.AlignVCenter)
+        self.buttons.append((btn_folder, "fa5s.folder-plus"))
 
         # New repertoire button
         btn_rep = QPushButton()
-        btn_rep.setIcon(qta.icon("fa5s.plus", color="#a9aea7"))
+        btn_rep.setIcon(qta.icon("fa5s.plus", color=icon_color))
         btn_rep.setIconSize(QSize(14, 14))
         btn_rep.setToolTip("New Repertoire")
         btn_rep.setFixedSize(24, 24)
@@ -277,29 +299,33 @@ class RepertoireTreeWidget(QWidget):
         btn_rep.setStyleSheet(self._icon_button_style())
         btn_rep.clicked.connect(self._new_repertoire_at_root)
         layout.addWidget(btn_rep, 0, Qt.AlignVCenter)
+        self.buttons.append((btn_rep, "fa5s.plus"))
 
         return w
 
     def _build_bottom_bar(self) -> QWidget:
         w = QWidget()
         w.setFixedHeight(34)
-        w.setStyleSheet("""
-            QWidget { background: #21201d; border-top: 1px solid #312e2b; }
-        """)
+        bot_bg = "#21201d" if self.is_dark else "#f1f5f9"
+        bot_border = "#312e2b" if self.is_dark else "#cbd5e1"
+        w.setStyleSheet(f"QWidget {{ background: {bot_bg}; border-top: 1px solid {bot_border}; }}")
         layout = QHBoxLayout(w)
         layout.setContentsMargins(6, 0, 6, 0)
         layout.setSpacing(4)
         layout.setAlignment(Qt.AlignVCenter)
 
+        icon_color = "#a9aea7" if self.is_dark else "#475569"
+
         def _small_btn(icon_name, tooltip, slot):
             b = QPushButton()
-            b.setIcon(qta.icon(icon_name, color="#a9aea7"))
+            b.setIcon(qta.icon(icon_name, color=icon_color))
             b.setIconSize(QSize(14, 14))
             b.setToolTip(tooltip)
             b.setFixedSize(24, 24)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(self._icon_button_style())
             b.clicked.connect(slot)
+            self.buttons.append((b, icon_name))
             return b
 
         layout.addWidget(_small_btn("fa5s.file-import",  "Import PGN",    self._import_pgn), 0, Qt.AlignVCenter)
@@ -328,6 +354,11 @@ class RepertoireTreeWidget(QWidget):
         # by the ORDER BY sort_order, name)
         item_by_id: dict[int, QTreeWidgetItem] = {}
 
+        folder_color = QColor("#e5e7eb" if self.is_dark else "#0f172a")
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
+        repertoire_color = QColor("#e5e7eb" if self.is_dark else "#0f172a")
+        repertoire_icon_color = "#cbd5e1" if self.is_dark else "#64748b"
+
         def add_node(node: RepertoireNode, parent_item):
             item = QTreeWidgetItem(parent_item)
             item.setText(0, node.name)
@@ -335,12 +366,12 @@ class RepertoireTreeWidget(QWidget):
             item.setData(0, NODE_TYPE_ROLE, node.node_type)
 
             if node.is_folder():
-                item.setIcon(0, qta.icon("fa5s.folder", color="#fb923c"))
-                item.setForeground(0, FOLDER_COLOR)
+                item.setIcon(0, qta.icon("fa5s.folder", color=folder_icon_color))
+                item.setForeground(0, folder_color)
                 item.setFlags(item.flags() | Qt.ItemIsDropEnabled)
             else:
-                item.setIcon(0, qta.icon("fa5s.book", color="#cbd5e1"))
-                item.setForeground(0, REPERTOIRE_COLOR)
+                item.setIcon(0, qta.icon("fa5s.book", color=repertoire_icon_color))
+                item.setForeground(0, repertoire_color)
                 item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
 
             item_by_id[node.id] = item
@@ -418,22 +449,25 @@ class RepertoireTreeWidget(QWidget):
             self._collect_expanded(child, result)
 
     def _restore_expanded(self, parent_item, expanded_ids: set):
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
         for i in range(parent_item.childCount()):
             child = parent_item.child(i)
             nid = child.data(0, NODE_ID_ROLE)
             if nid in expanded_ids:
                 child.setExpanded(True)
                 if child.data(0, NODE_TYPE_ROLE) == "folder":
-                    child.setIcon(0, qta.icon("fa5s.folder-open", color="#fb923c"))
+                    child.setIcon(0, qta.icon("fa5s.folder-open", color=folder_icon_color))
             self._restore_expanded(child, expanded_ids)
 
     def _on_item_expanded(self, item: QTreeWidgetItem):
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
         if item.data(0, NODE_TYPE_ROLE) == "folder":
-            item.setIcon(0, qta.icon("fa5s.folder-open", color="#fb923c"))
+            item.setIcon(0, qta.icon("fa5s.folder-open", color=folder_icon_color))
 
     def _on_item_collapsed(self, item: QTreeWidgetItem):
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
         if item.data(0, NODE_TYPE_ROLE) == "folder":
-            item.setIcon(0, qta.icon("fa5s.folder", color="#fb923c"))
+            item.setIcon(0, qta.icon("fa5s.folder", color=folder_icon_color))
 
     def _is_descendant(self, node_id: int, candidate_parent_id) -> bool:
         """Return True if candidate_parent_id is node_id or a descendant of node_id."""
@@ -470,48 +504,52 @@ class RepertoireTreeWidget(QWidget):
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_style())
 
+        icon_color = "#a9aea7" if self.is_dark else "#475569"
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
+        book_icon_color = "#cbd5e1" if self.is_dark else "#475569"
+
         if item is None:
             # Clicked on empty space — only allow creation at root
-            menu.addAction(qta.icon("fa5s.folder-plus", color="#fb923c"),
+            menu.addAction(qta.icon("fa5s.folder-plus", color=folder_icon_color),
                            "New Folder",       self._new_folder_at_root)
-            menu.addAction(qta.icon("fa5s.plus", color="#cbd5e1"),
+            menu.addAction(qta.icon("fa5s.plus", color=book_icon_color),
                            "New Repertoire",   self._new_repertoire_at_root)
             menu.addSeparator()
-            menu.addAction(qta.icon("fa5s.expand-alt", color="#a9aea7"),
+            menu.addAction(qta.icon("fa5s.expand-alt", color=icon_color),
                            "Expand All",       self.expand_all)
-            menu.addAction(qta.icon("fa5s.compress-alt", color="#a9aea7"),
+            menu.addAction(qta.icon("fa5s.compress-alt", color=icon_color),
                            "Collapse All",     self.collapse_all)
         else:
             node_type = item.data(0, NODE_TYPE_ROLE)
 
             if node_type == "folder":
-                menu.addAction(qta.icon("fa5s.folder-plus", color="#fb923c"),
+                menu.addAction(qta.icon("fa5s.folder-plus", color=folder_icon_color),
                                "New Subfolder",   lambda: self._new_folder(item))
-                menu.addAction(qta.icon("fa5s.plus", color="#cbd5e1"),
+                menu.addAction(qta.icon("fa5s.plus", color=book_icon_color),
                                "New Repertoire",  lambda: self._new_repertoire(item))
                 menu.addSeparator()
 
             if node_type == "repertoire":
-                menu.addAction(qta.icon("fa5s.book-open", color="#cbd5e1"),
+                menu.addAction(qta.icon("fa5s.book-open", color=book_icon_color),
                                "Open",            lambda: self._open_repertoire(item))
                 menu.addSeparator()
 
-            menu.addAction(qta.icon("fa5s.pen", color="#e6912c"),
+            menu.addAction(qta.icon("fa5s.pen", color=folder_icon_color),
                            "Rename",              lambda: self._rename(item))
-            menu.addAction(qta.icon("fa5s.arrows-alt", color="#9ca3af"),
+            menu.addAction(qta.icon("fa5s.arrows-alt", color=icon_color),
                            "Move…",               lambda: self._move(item))
             menu.addSeparator()
 
             if node_type == "repertoire":
-                menu.addAction(qta.icon("fa5s.file-import", color="#a9aea7"),
+                menu.addAction(qta.icon("fa5s.file-import", color=icon_color),
                                "Import PGN…",     lambda: self._import_pgn_into(item))
-                menu.addAction(qta.icon("fa5s.file-export", color="#a9aea7"),
+                menu.addAction(qta.icon("fa5s.file-export", color=icon_color),
                                "Export PGN…",     lambda: self._export_pgn_of(item))
                 menu.addSeparator()
 
-            menu.addAction(qta.icon("fa5s.expand-alt", color="#a9aea7"),
+            menu.addAction(qta.icon("fa5s.expand-alt", color=icon_color),
                            "Expand All",          self.expand_all)
-            menu.addAction(qta.icon("fa5s.compress-alt", color="#a9aea7"),
+            menu.addAction(qta.icon("fa5s.compress-alt", color=icon_color),
                            "Collapse All",        self.collapse_all)
             menu.addSeparator()
 
@@ -537,10 +575,11 @@ class RepertoireTreeWidget(QWidget):
 
     def _update_all_folder_icons(self, parent_item: QTreeWidgetItem, expanded: bool):
         icon_name = "fa5s.folder-open" if expanded else "fa5s.folder"
+        folder_icon_color = "#3b82f6" if self.is_dark else "#2563eb"
         for i in range(parent_item.childCount()):
             child = parent_item.child(i)
             if child.data(0, NODE_TYPE_ROLE) == "folder":
-                child.setIcon(0, qta.icon(icon_name, color="#fb923c"))
+                child.setIcon(0, qta.icon(icon_name, color=folder_icon_color))
             self._update_all_folder_icons(child, expanded)
 
     # ------------------------------------------------------------------
@@ -729,36 +768,117 @@ class RepertoireTreeWidget(QWidget):
         self._repo.save_pgn(node_id, pgn_text)
         self.refresh()
 
+    def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
+        if hasattr(self, "header_widget"):
+            hdr_bg = "#21201d" if is_dark else "#f1f5f9"
+            hdr_border = "#312e2b" if is_dark else "#cbd5e1"
+            self.header_widget.setStyleSheet(f"QWidget {{ background: {hdr_bg}; border-bottom: 1px solid {hdr_border}; }}")
+
+        if hasattr(self, "bottom_widget"):
+            bot_bg = "#21201d" if is_dark else "#f1f5f9"
+            bot_border = "#312e2b" if is_dark else "#cbd5e1"
+            self.bottom_widget.setStyleSheet(f"QWidget {{ background: {bot_bg}; border-top: 1px solid {bot_border}; }}")
+
+        if hasattr(self, "search_edit"):
+            search_bg = "#262421" if is_dark else "#ffffff"
+            search_color = "#e5e7eb" if is_dark else "#0f172a"
+            search_border = "#403d39" if is_dark else "#cbd5e1"
+            self.search_edit.setStyleSheet(f"""
+                QLineEdit {{
+                    background-color: {search_bg};
+                    color: {search_color};
+                    border: 1px solid {search_border};
+                    border-radius: 4px;
+                    padding: 1px 6px;
+                    font-size: 11px;
+                }}
+                QLineEdit:focus {{
+                    border: 1px solid #2563eb;
+                }}
+            """)
+
+        if hasattr(self, "tree"):
+            self.tree.setStyleSheet(self._tree_style())
+
+        btn_style = self._icon_button_style()
+        icon_color = "#a9aea7" if is_dark else "#475569"
+        if hasattr(self, "buttons"):
+            for btn, icon_name in self.buttons:
+                btn.setStyleSheet(btn_style)
+                btn.setIcon(qta.icon(icon_name, color=icon_color))
+
+        self.refresh()
+
     # ------------------------------------------------------------------
     # Styling helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _tree_style() -> str:
+    def _tree_style(self) -> str:
+        if self.is_dark:
+            return """
+            QTreeWidget {
+                background-color: #262421;
+                border: none;
+                color: #e5e7eb;
+                outline: none;
+            }
+            QTreeWidget::item {
+                padding: 6px 4px;
+                border-bottom: 1px solid #21201d;
+                border-radius: 4px;
+            }
+            QTreeWidget::item:hover {
+                background-color: #312e2b;
+                color: #ffffff;
+            }
+            QTreeWidget::item:selected {
+                background-color: #1a365d;
+                color: #ffffff;
+            }
+            """
         return """
         QTreeWidget {
-            background-color: #262421;
+            background-color: #ffffff;
             border: none;
-            color: #e5e7eb;
+            color: #0f172a;
             outline: none;
         }
         QTreeWidget::item {
             padding: 6px 4px;
-            border-bottom: 1px solid #21201d;
+            border-bottom: 1px solid #f1f5f9;
             border-radius: 4px;
         }
         QTreeWidget::item:hover {
-            background-color: #312e2b;
-            color: #ffffff;
+            background-color: #f1f5f9;
+            color: #0f172a;
         }
         QTreeWidget::item:selected {
-            background-color: #403d39;
-            color: #ffffff;
+            background-color: #dbeafe;
+            color: #1e3a8a;
         }
         """
 
-    @staticmethod
-    def _icon_button_style() -> str:
+    def _icon_button_style(self) -> str:
+        if self.is_dark:
+            return """
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 3px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 0px;
+                min-height: 0px;
+            }
+            QPushButton:hover {
+                background-color: #312e2b;
+                border: 1px solid #403d39;
+            }
+            QPushButton:pressed {
+                background-color: #21201d;
+            }
+            """
         return """
         QPushButton {
             background-color: transparent;
@@ -770,23 +890,47 @@ class RepertoireTreeWidget(QWidget):
             min-height: 0px;
         }
         QPushButton:hover {
-            background-color: #312e2b;
-            border: 1px solid #403d39;
+            background-color: #e2e8f0;
+            border: 1px solid #cbd5e1;
         }
         QPushButton:pressed {
-            background-color: #21201d;
+            background-color: #cbd5e1;
         }
         """
 
-    @staticmethod
-    def _menu_style() -> str:
+    def _menu_style(self) -> str:
+        if self.is_dark:
+            return """
+            QMenu {
+                background: #262421;
+                border: 1px solid #403d39;
+                border-radius: 4px;
+                padding: 4px;
+                color: #bababa;
+                font-size: 13px;
+            }
+            QMenu::item {
+                padding: 6px 20px 6px 10px;
+                border-radius: 3px;
+                margin: 1px 2px;
+            }
+            QMenu::item:selected {
+                background: #312e2b;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #403d39;
+                margin: 4px 8px;
+            }
+            """
         return """
         QMenu {
-            background: #262421;
-            border: 1px solid #403d39;
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
             border-radius: 4px;
             padding: 4px;
-            color: #bababa;
+            color: #0f172a;
             font-size: 13px;
         }
         QMenu::item {
@@ -795,12 +939,12 @@ class RepertoireTreeWidget(QWidget):
             margin: 1px 2px;
         }
         QMenu::item:selected {
-            background: #312e2b;
-            color: #ffffff;
+            background: #dbeafe;
+            color: #1e3a8a;
         }
         QMenu::separator {
             height: 1px;
-            background: #403d39;
+            background: #e2e8f0;
             margin: 4px 8px;
         }
         """

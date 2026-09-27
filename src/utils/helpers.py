@@ -59,15 +59,17 @@ def _create_action(
     return act
 
 
-def _create_iconed_button(icon_name: str, shortcut=str, tooltip: str = "", is_dark=True) -> QPushButton:
+def _create_iconed_button(icon_name: str, shortcut: str = "", tooltip: str = "", is_dark=True) -> QPushButton:
     button = QPushButton()
     button.setObjectName("SmallIconButton")
     # Store icon name for theme switching
     button.setProperty("icon_name", icon_name)
     button.setIcon(_qicon(icon_name, is_dark=is_dark))
     button.setIconSize(ICON_SIZE)
-    button.setToolTip(tooltip)
-    button.setShortcut(shortcut)
+    if tooltip:
+        button.setToolTip(tooltip)
+    if shortcut:
+        button.setShortcut(shortcut)
     button.setCursor(Qt.PointingHandCursor)
     return button
 

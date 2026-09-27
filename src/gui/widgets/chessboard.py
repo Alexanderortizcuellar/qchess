@@ -192,39 +192,64 @@ class ChessBoard(QtWidgets.QWidget):
 
     def set_theme(self, theme_name_or_dict):
         themes = {
-            "classic": {"light": "#dee3e6", "dark": "#8ca2ad"},
-            "lichess": {"light": "#f0d9b5", "dark": "#b58863"},
-            "chess.com": {"light": "#eeeed2", "dark": "#769656"},
-            "blue": {"light": "#ebecd0", "dark": "#779bb0"},
-            "wood": {"light": "#dec29b", "dark": "#966f33"},
+            "classic": {
+                "light": "#dee3e6",
+                "dark": "#8ca2ad",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "lichess": {
+                "light": "#f0d9b5",
+                "dark": "#b58863",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "chess.com": {
+                "light": "#eeeed2",
+                "dark": "#769656",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "blue": {
+                "light": "#ebecd0",
+                "dark": "#779bb0",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
+            "wood": {
+                "light": "#dec29b",
+                "dark": "#966f33",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
+                "selected": "rgba(255, 152, 0, 0.5)",
+            },
             "cerezo": {
                 "light": "#e8ceab",
                 "dark": "#9c4a2f",
-                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
                 "selected": "rgba(255, 152, 0, 0.5)",
             },
             "leather": {
                 "light": "#dfc7a7",
                 "dark": "#7a583e",
-                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
                 "selected": "rgba(255, 152, 0, 0.5)",
             },
             "classic green": {
                 "light": "#ffffdd",
                 "dark": "#538053",
-                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
                 "selected": "rgba(255, 152, 0, 0.5)",
             },
             "marble": {
                 "light": "#e4e7eb",
                 "dark": "#6d7f8d",
-                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
                 "selected": "rgba(0, 150, 255, 0.4)",
             },
             "nogal": {
                 "light": "#edd6b1",
                 "dark": "#674224",
-                "lastMove": "rgba(255, 235, 59, 0.4)",
+                "lastMove": "rgba(255, 235, 59, 0.45)",
                 "selected": "rgba(255, 152, 0, 0.5)",
             },
         }
@@ -265,4 +290,35 @@ class ChessBoard(QtWidgets.QWidget):
         self.set_fen("8/8/8/8/8/8/8/8 w - - 0 1")
         self.ReadyForNextMove.emit(self.fen())
         self.fenChanged.emit(self.fen())
+
+    def set_preview(
+        self,
+        fen: str,
+        last_move: chess.Move = None,
+        shapes: list = None,
+        opacity: float = 0.85,
+        dim_board: bool = False,
+        animate: bool = False,
+    ):
+        """Set temporary non-destructive board preview overlay without modifying game state."""
+        if hasattr(self.board_view, "set_preview"):
+            self.board_view.set_preview(
+                fen=fen,
+                last_move=last_move,
+                shapes=shapes,
+                opacity=opacity,
+                dim_board=dim_board,
+                animate=animate,
+            )
+
+    def clear_preview(self, animate: bool = False):
+        """Clear temporary board preview and restore the active game board state."""
+        if hasattr(self.board_view, "clear_preview"):
+            self.board_view.clear_preview(animate=animate)
+
+    @property
+    def is_previewing(self) -> bool:
+        if hasattr(self.board_view, "is_previewing"):
+            return self.board_view.is_previewing
+        return False
 

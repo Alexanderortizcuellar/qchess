@@ -1,4 +1,5 @@
 import re
+from collections import OrderedDict
 from PyQt5.QtCore import Qt, QRect, pyqtSignal, QUrl
 from PyQt5.QtGui import QColor, QFont, QPainter, QFontMetrics
 from PyQt5.QtWidgets import QScrollArea, QWidget, QMenu, QAction, QVBoxLayout
@@ -36,16 +37,19 @@ class PaintBlock:
 
 
 class Token:
-    def __init__(self, token_type, text, move_idx=-1, level=0, classification=None):
+    def __init__(self, token_type, text, move_idx=-1, level=0, classification=None, fen=None):
         self.token_type = token_type
         self.text = text
         self.move_idx = move_idx
         self.level = level
         self.rect = None
         self.classification = classification
+        self.fen = fen
 
 
 class QPainterBrowser(QWidget):
+    MAX_DIAGRAM_CACHE = 64  # Cap diagram pixmaps to prevent unbounded memory growth
+
     def __init__(self, parent_browser):
         super().__init__()
         self.parent_browser = parent_browser
@@ -53,7 +57,33 @@ class QPainterBrowser(QWidget):
         self.line_height = 30
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
+        self._diagram_cache: OrderedDict[tuple, Any] = OrderedDict()
         
+    def clear_diagram_cache(self):
+        self._diagram_cache.clear()
+
+    def get_diagram_pixmap(self, fen: str, size: int, is_dark: bool):
+        key = (fen, size, is_dark)
+        if key in self._diagram_cache:
+            self._diagram_cache.move_to_end(key)
+            return self._diagram_cache[key]
+
+        from gchessboard.src.static_board import StaticChessBoard
+        light_c = "#dfc7a7" if is_dark else "#f1f5f9"
+        dark_c = "#7a583e" if is_dark else "#94a3b8"
+        static_b = StaticChessBoard(
+            position=fen,
+            light_color=light_c,
+            dark_color=dark_c,
+            show_coordinates=True,
+        )
+        pix = static_b.render_to_pixmap(width=size, height=size)
+        self._diagram_cache[key] = pix
+        self._diagram_cache.move_to_end(key)
+        while len(self._diagram_cache) > self.MAX_DIAGRAM_CACHE:
+            self._diagram_cache.popitem(last=False)
+        return pix
+
     def set_blocks(self, blocks):
         self.blocks = blocks
         self.compute_layout(self.blocks)
@@ -95,6 +125,19 @@ class QPainterBrowser(QWidget):
                 continue
                 
             for token in block.tokens:
+                if token.token_type == "diagram":
+                    # Break to a dedicated new line if not already at the left margin
+                    if x > margin_left + indent:
+                        y += self.line_height
+                        x = margin_left + indent
+                    avail_diag = width - indent
+                    diag_size = min(220, max(140, int(avail_diag * 0.75)))
+                    diag_x = margin_left + indent + max(0, (avail_diag - diag_size) // 2)
+                    token.rect = QRect(diag_x, y + 4, diag_size, diag_size)
+                    y += diag_size + 14
+                    x = margin_left + indent
+                    continue
+
                 # Set layout fonts and measure token width
                 if token.token_type == "move" or token.token_type == "result":
                     if token.level == 0:
@@ -151,14 +194,14 @@ class QPainterBrowser(QWidget):
             highlight_bg = QColor("#1a365d")
             bracket_color = QColor("#8b8987")
         else:
-            bg_color = QColor("#f1f1f1")
-            num_color = QColor("#555555")
-            main_move_color = QColor("#312e2b")
-            var_move_color = QColor("#777777")
-            comment_color = QColor("#2e7d32")
-            eval_color = QColor("#0288d1")
+            bg_color = QColor("#ffffff")
+            num_color = QColor("#64748b")
+            main_move_color = QColor("#0f172a")
+            var_move_color = QColor("#64748b")
+            comment_color = QColor("#15803d")
+            eval_color = QColor("#2563eb")
             highlight_bg = QColor("#dbeafe")
-            bracket_color = QColor("#999999")
+            bracket_color = QColor("#94a3b8")
             
         # Draw background
         painter.fillRect(self.rect(), bg_color)
@@ -206,7 +249,7 @@ class QPainterBrowser(QWidget):
                             4: QColor("#b58900"),  # Inaccuracy
                             5: QColor("#e65100"),  # Mistake
                             6: QColor("#b71c1c"),  # Blunder
-                            7: QColor("#28c2a4"),  # Brilliant
+                            7: QColor("#0d9488"),  # Brilliant
                             8: QColor("#d32f2f"),  # Miss
                         }
 
@@ -220,6 +263,8 @@ class QPainterBrowser(QWidget):
                     show_classifications = getattr(self.parent_browser, "show_classifications", True)
                     if show_classifications and hasattr(token, 'classification') and token.classification in cls_colors:
                         painter.setPen(cls_colors[token.classification])
+                    elif is_active and not is_dark:
+                        painter.setPen(QColor("#1e3a8a"))
                     else:
                         painter.setPen(main_move_color if token.level == 0 else var_move_color)
                             
@@ -240,6 +285,20 @@ class QPainterBrowser(QWidget):
                     painter.setPen(main_move_color)
                     painter.drawText(token.rect.x() + 3, token.rect.y() + fm_normal.ascent(), token.text)
                     
+                elif token.token_type == "diagram":
+                    board_fen = getattr(token, 'fen', None)
+                    if not board_fen and token.move_idx >= 0:
+                        node = self.parent_browser.move_manager.get_node_by_index(token.move_idx)
+                        if node:
+                            board_fen = node.board().fen()
+                    if board_fen:
+                        pix = self.get_diagram_pixmap(board_fen, token.rect.width(), is_dark)
+                        if pix and not pix.isNull():
+                            painter.drawPixmap(token.rect, pix)
+                            border_color = QColor("#403d39") if is_dark else QColor("#cbd5e1")
+                            painter.setPen(border_color)
+                            painter.drawRect(token.rect)
+
                 else:
                     painter.setFont(normal_font)
                     painter.setPen(bracket_color if token.text in ["[", "]", "(", ")"] else num_color)
@@ -250,10 +309,11 @@ class QPainterBrowser(QWidget):
         pos = event.pos()
         for block in self.blocks:
             for token in block.tokens:
-                if token.token_type == "move" and token.rect and token.rect.contains(pos):
-                    self.parent_browser.jump_to_move(token.move_idx)
-                    event.accept()
-                    return
+                if (token.token_type == "move" or token.token_type == "diagram") and token.rect and token.rect.contains(pos):
+                    if token.move_idx >= 0:
+                        self.parent_browser.jump_to_move(token.move_idx)
+                        event.accept()
+                        return
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
@@ -288,7 +348,7 @@ class QPainterHeaderWidget(QWidget):
         painter.setRenderHint(QPainter.TextAntialiasing)
         
         is_dark = self.parent_browser.is_dark
-        bg_color = QColor("#262421") if is_dark else QColor("#f1f1f1")
+        bg_color = QColor("#262421") if is_dark else QColor("#ffffff")
         painter.fillRect(self.rect(), bg_color)
         
         headers = {}
@@ -312,11 +372,11 @@ class QPainterHeaderWidget(QWidget):
             header_vs = QColor("#e6912c")
             header_sub = QColor("#8b8987")
         else:
-            text_color = QColor("#312e2b")
-            header_bg = QColor("#e1e1e1")
-            header_border = QColor("#cccccc")
-            header_vs = QColor("#e6912c")
-            header_sub = QColor("#555555")
+            text_color = QColor("#0f172a")
+            header_bg = QColor("#f8fafc")
+            header_border = QColor("#e2e8f0")
+            header_vs = QColor("#2563eb")
+            header_sub = QColor("#64748b")
             
         card_margin = 15
         card_padding = 10
@@ -518,6 +578,9 @@ class QPainterPGNBrowser(QWidget):
             self.header_widget.updateGeometry()
             self.main_layout.activate()
             
+            if nodes_changed or headers_changed:
+                self.paint_widget.clear_diagram_cache()
+            
             self.flat_nodes = []
             self.blocks = []
             
@@ -675,6 +738,15 @@ class QPainterPGNBrowser(QWidget):
                     for word in words:
                         blocks[-1].tokens.append(Token("comment", word, level=level))
                     
+            if self.move_manager.has_diagram(curr):
+                curr_fen = curr.board().fen()
+                if blocks:
+                    blocks[-1].tokens.append(Token("diagram", "", move_idx=move_idx, level=level, fen=curr_fen))
+                else:
+                    block = PaintBlock(level)
+                    block.tokens.append(Token("diagram", "", move_idx=move_idx, level=level, fen=curr_fen))
+                    blocks.append(block)
+
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
                 if siblings and siblings[0] == curr:
@@ -762,6 +834,15 @@ class QPainterPGNBrowser(QWidget):
                 words = cleaned.split()
                 for word in words:
                     current_block.tokens.append(Token("comment", word, level=level))
+
+            if self.move_manager.has_diagram(curr):
+                curr_fen = curr.board().fen()
+                if current_block is not None:
+                    current_block.tokens.append(Token("diagram", "", move_idx=move_idx, level=level, fen=curr_fen))
+                else:
+                    var_block = PaintBlock(level=level)
+                    var_block.tokens.append(Token("diagram", "", move_idx=move_idx, level=level, fen=curr_fen))
+                    blocks.append(var_block)
                         
             if show_variations and curr.parent:
                 siblings = curr.parent.variations
@@ -881,10 +962,18 @@ class QPainterPGNBrowser(QWidget):
             add_eval_act.triggered.connect(lambda checked, idx=move_idx: self.on_add_eval(idx))
             menu.addAction(add_eval_act)
 
+        # --- Diagram Action ---
+        has_diagram = self.move_manager.has_diagram(node)
+        diag_label = "Remove Diagram" if has_diagram else "Insert Diagram"
+        diag_act = QAction(qta.icon("fa5s.th-large", color="#a9aea7"), diag_label, self)
+        diag_act.triggered.connect(lambda checked, idx=move_idx: self.on_toggle_diagram(idx))
+        menu.addAction(diag_act)
+
         menu.addSeparator()
 
         actions = [
             ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
+            ("Tiempo Jugada...", self.on_edit_clk, "fa5s.clock"),
             (None, None, None),  # Separator
             ("Promote to Main Line", self.on_promote_to_main, "fa5s.arrow-up"),
             ("Promote Move", self.on_promote, "fa5s.chevron-up"),
@@ -902,6 +991,19 @@ class QPainterPGNBrowser(QWidget):
                 menu.addAction(act)
 
         menu.exec_(self.mapToGlobal(point))
+
+    def on_toggle_diagram(self, node_index: int):
+        if node_index is not None:
+            self.move_manager.toggle_diagram(node_index)
+
+    def on_edit_clk(self, anchor):
+        node_index = self.match_node(anchor)
+        if node_index is not None:
+            from gui.dialogs.move_time_dialog import MoveTimeDialog
+            current_clk = self.move_manager.get_clk_annotation(node_index)
+            dlg = MoveTimeDialog(self, current_clk)
+            if dlg.exec_() == MoveTimeDialog.Accepted:
+                self.move_manager.set_clk_annotation(node_index, dlg.get_clk())
 
     def on_add_comment(self, anchor):
         node_index = self.match_node(anchor)

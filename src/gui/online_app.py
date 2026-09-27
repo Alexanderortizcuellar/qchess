@@ -223,11 +223,16 @@ class OnlineChessApp(QMainWindow):
                 selection-color: #ffffff;
             }
             QHeaderView::section {
-                background-color: #21201d;
-                color: #ffffff;
+                background-color: #141312;
+                color: #f8fafc;
                 padding: 6px;
-                border: 1px solid #403d39;
+                border: 1px solid #383531;
                 font-weight: bold;
+                font-size: 11px;
+            }
+            QHeaderView::section:hover {
+                background-color: #242220;
+                color: #ffffff;
             }
             QTableWidget::item {
                 padding: 10px;

@@ -1,13 +1,14 @@
 import chess
 import chess.svg
 import qtawesome as qta
-from PyQt5.QtCore import Qt, pyqtSignal, QByteArray, QSize, QMimeData
+from PyQt5.QtCore import Qt, pyqtSignal, QByteArray, QSize, QMimeData, QSettings
 from PyQt5.QtGui import QPixmap, QPainter, QIcon, QDrag
 from PyQt5.QtSvg import QSvgRenderer
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QButtonGroup, QApplication
 )
+
 
 def get_piece_pixmap(piece, size=40):
     """Generates a QPixmap from the python-chess SVG piece."""
@@ -92,8 +93,15 @@ class ChessBoardEditorWidget(QWidget):
         self.tool_group.setExclusive(True)
         self.tools_map = {}
         self.square_widgets = {}
+        self.palette_buttons = []
+        self.is_dark = self._is_dark()
 
         self.init_ui()
+
+    def _is_dark(self) -> bool:
+        if self.parent() is not None and hasattr(self.parent(), "is_dark"):
+            return bool(self.parent().is_dark)
+        return QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -126,6 +134,7 @@ class ChessBoardEditorWidget(QWidget):
         bot_tb = self.create_toolbar(color=chess.WHITE)
         main_layout.addLayout(bot_tb)
 
+        self.set_theme(self.is_dark)
         self.update_board_ui()
         if self.tool_group.buttons():
             self.tool_group.buttons()[0].setChecked(True)
@@ -134,34 +143,19 @@ class ChessBoardEditorWidget(QWidget):
         layout = QHBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        btn_style = """
-            QPushButton {
-                background-color: #312e2b;
-                border: 1px solid #403d39;
-                border-radius: 4px;
-                padding: 2px;
-            }
-            QPushButton:hover {
-                background-color: #3f3c38;
-                border: 1px solid #504d48;
-            }
-            QPushButton:checked {
-                background-color: #1e3a5f;
-                border: 2px solid #3b82f6;
-            }
-        """
+        layout.setSpacing(3)
 
         # Hand / Move tool
         btn_hand = QPushButton()
-        btn_hand.setIcon(qta.icon("fa5s.hand-pointer", color="#cbd5e1" if color == chess.BLACK else "#60a5fa"))
         btn_hand.setCheckable(True)
         btn_hand.setFixedSize(38, 38)
-        btn_hand.setStyleSheet(btn_style)
+        btn_hand.setCursor(Qt.PointingHandCursor)
         btn_hand.setToolTip("Hand: Click or Drag to move pieces on the board")
         self.tool_group.addButton(btn_hand)
         self.tools_map[btn_hand] = "hand"
+        btn_hand.setProperty("tool_type", "hand")
+        btn_hand.setProperty("tool_color", "black" if color == chess.BLACK else "white")
+        self.palette_buttons.append(btn_hand)
         layout.addWidget(btn_hand)
 
         # Piece buttons
@@ -182,24 +176,76 @@ class ChessBoardEditorWidget(QWidget):
             btn.setIconSize(QSize(32, 32))
             btn.setCheckable(True)
             btn.setFixedSize(38, 38)
-            btn.setStyleSheet(btn_style)
             btn.setToolTip(f"Place {piece.symbol()} on square")
             self.tool_group.addButton(btn)
             self.tools_map[btn] = piece
+            btn.setProperty("tool_type", "piece")
+            self.palette_buttons.append(btn)
             layout.addWidget(btn)
 
         # Trash tool
         btn_trash = QPushButton()
-        btn_trash.setIcon(qta.icon("fa5s.trash-alt", color="#ef4444"))
         btn_trash.setCheckable(True)
         btn_trash.setFixedSize(38, 38)
-        btn_trash.setStyleSheet(btn_style)
+        btn_trash.setCursor(Qt.PointingHandCursor)
         btn_trash.setToolTip("Trash: Click squares to remove pieces")
         self.tool_group.addButton(btn_trash)
         self.tools_map[btn_trash] = "trash"
+        btn_trash.setProperty("tool_type", "trash")
+        self.palette_buttons.append(btn_trash)
         layout.addWidget(btn_trash)
 
         return layout
+
+    def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
+        if is_dark:
+            btn_style = """
+                QPushButton {
+                    background-color: #262421;
+                    border: 1px solid #383531;
+                    border-radius: 4px;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #35322e;
+                    border: 1px solid #504d48;
+                }
+                QPushButton:checked {
+                    background-color: #1e3a5f;
+                    border: 2px solid #3b82f6;
+                }
+            """
+        else:
+            btn_style = """
+                QPushButton {
+                    background-color: #ffffff;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 2px;
+                }
+                QPushButton:hover {
+                    background-color: #f1f5f9;
+                    border: 1px solid #94a3b8;
+                }
+                QPushButton:checked {
+                    background-color: #dbeafe;
+                    border: 2px solid #2563eb;
+                }
+            """
+
+        for btn in self.palette_buttons:
+            btn.setStyleSheet(btn_style)
+            t_type = btn.property("tool_type")
+            if t_type == "hand":
+                t_col = btn.property("tool_color")
+                if is_dark:
+                    icon_color = "#cbd5e1" if t_col == "black" else "#60a5fa"
+                else:
+                    icon_color = "#334155" if t_col == "black" else "#2563eb"
+                btn.setIcon(qta.icon("fa5s.hand-pointer", color=icon_color))
+            elif t_type == "trash":
+                btn.setIcon(qta.icon("fa5s.trash-alt", color="#ef4444" if is_dark else "#dc2626"))
 
     def square_clicked(self, square_index):
         active_btn = self.tool_group.checkedButton()
@@ -275,5 +321,3 @@ class ChessBoardEditorWidget(QWidget):
 
     def get_board_fen(self) -> str:
         return self.board.fen()
-
-

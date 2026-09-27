@@ -1,3 +1,4 @@
+import re
 from io import StringIO
 
 import chess
@@ -260,6 +261,28 @@ class MoveManager(QObject):
             self.current_node = self.nodes[-1]
             self.create_mapping()
 
+    def goto_ply(self, target_ply: int):
+        """Jump active move cursor to a specific half-move number (ply) along the mainline."""
+        if target_ply <= 0:
+            self.jump_to_start()
+            return
+        node = self.game
+        current_ply = 0
+        while current_ply < target_ply and node.variations:
+            node = node.variations[0]
+            current_ply += 1
+        self.current_node = node
+        self.create_mapping()
+
+    def get_current_ply(self) -> int:
+        """Return the current half-move (ply) depth of the active node."""
+        node = self.current_node
+        ply = 0
+        while node and node.parent:
+            ply += 1
+            node = node.parent
+        return ply
+
     def get_board(self):
         return self.current_node.board()
 
@@ -321,6 +344,39 @@ class MoveManager(QObject):
         self.create_mapping()
         self.is_dirty = True
 
+    def get_clk_annotation(self, index: int) -> str:
+        """Extract [%clk ...] time string from the node's comment."""
+        node = self.get_node_by_index(index)
+        if not node or not getattr(node, "comment", None):
+            return ""
+        match = re.search(r'\[%clk\s+([^\]]+)\]', node.comment)
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def set_clk_annotation(self, index: int, clk_str: str):
+        """Add, update, or remove [%clk ...] tag in the node's comment."""
+        node = self.get_node_by_index(index)
+        if not node:
+            return
+
+        clk_clean = clk_str.replace("[%clk", "").replace("]", "").strip()
+        if not clk_clean:
+            if getattr(node, "comment", None):
+                node.comment = re.sub(r'\[%clk\s+[^\]]+\]\s*', '', node.comment).strip()
+        else:
+            clk_tag = f"[%clk {clk_clean}]"
+            if getattr(node, "comment", None):
+                if re.search(r'\[%clk\s+[^\]]+\]', node.comment):
+                    node.comment = re.sub(r'\[%clk\s+[^\]]+\]', clk_tag, node.comment)
+                else:
+                    node.comment = f"{node.comment.strip()} {clk_tag}".strip()
+            else:
+                node.comment = clk_tag
+
+        self.create_mapping()
+        self.is_dirty = True
+
     def set_move_nag(self, index: int, nag: int):
         node = self.get_node_by_index(index)
         if not hasattr(node, "nags"):
@@ -351,6 +407,43 @@ class MoveManager(QObject):
         node = self.get_node_by_index(index)
         if hasattr(node, "nags"):
             node.nags.clear()
+        self.create_mapping()
+        self.is_dirty = True
+
+    def has_diagram(self, node) -> bool:
+        if not node:
+            return False
+        if getattr(node, "comment", None) and "[%diagram]" in node.comment:
+            return True
+        if hasattr(node, "nags") and 201 in node.nags:
+            return True
+        return False
+
+    def toggle_diagram(self, index: int):
+        """Toggle [%diagram] tag and NAG 201 on the node at the given index."""
+        node = self.get_node_by_index(index)
+        if not node:
+            return
+
+        has_tag = bool(node.comment and "[%diagram]" in node.comment)
+        has_nag = bool(hasattr(node, "nags") and 201 in node.nags)
+
+        if has_tag or has_nag:
+            # Remove diagram
+            if node.comment:
+                node.comment = re.sub(r'\[%diagram\]\s*', '', node.comment).strip()
+            if hasattr(node, "nags"):
+                node.nags.discard(201)
+        else:
+            # Add diagram
+            if node.comment:
+                node.comment = f"{node.comment.strip()} [%diagram]".strip()
+            else:
+                node.comment = "[%diagram]"
+            if not hasattr(node, "nags"):
+                node.nags = set()
+            node.nags.add(201)
+
         self.create_mapping()
         self.is_dirty = True
 

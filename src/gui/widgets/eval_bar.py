@@ -58,9 +58,12 @@ class EvalBar(QWidget):
 
     whiteShare = pyqtProperty(float, fget=getWhiteShare, fset=setWhiteShare)
 
-    # --- public configuration ---------------------------------------------------
     def setAnimationDuration(self, ms: int):
-        self._anim.setDuration(int(ms))
+        try:
+            if hasattr(self, "_anim") and self._anim is not None:
+                self._anim.setDuration(int(ms))
+        except (RuntimeError, AttributeError):
+            pass
 
     def setCpScale(self, cp_scale: float):
         """Smaller values saturate faster (e.g., 250 for snappier bar)."""

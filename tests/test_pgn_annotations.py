@@ -188,9 +188,46 @@ def test_chessboard_update_with_shapes(qapp):
         custom_highlights=highlights,
     )
 
-    # Verify shapes and highlights reached the board view
     assert len(cb.board_view._state.shapes) == 1
     assert cb.board_view._state.shapes[0].type == "arrow"
     assert cb.board_view._state.shapes[0].orig == chess.E2
     assert cb.board_view._state.shapes[0].dest == chess.E4
     assert chess.E4 in cb.board_view._state.custom_highlights
+
+
+def test_move_manager_clk_annotations():
+    pgn_text = """[Event "Test"]
+[Site "?"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+
+1. e4 { [%clk 1:30:00] Good move } 1... c5 { [%clk 1:29:45] } 2. Nf3 *
+"""
+    game = chess.pgn.read_game(io.StringIO(pgn_text))
+    mm = MoveManager(pgn_text)
+
+    # Check 1. e4 (index 0)
+    assert mm.get_clk_annotation(0) == "1:30:00"
+    # Check 1... c5 (index 1)
+    assert mm.get_clk_annotation(1) == "1:29:45"
+    # Check 2. Nf3 (index 2) - no clk
+    assert mm.get_clk_annotation(2) == ""
+
+    # Update clock on 1. e4
+    mm.set_clk_annotation(0, "1:25:30")
+    assert mm.get_clk_annotation(0) == "1:25:30"
+    assert "[%clk 1:25:30]" in mm.nodes[0].comment
+    assert "Good move" in mm.nodes[0].comment
+
+    # Add clock to 2. Nf3
+    mm.set_clk_annotation(2, "0:05:00")
+    assert mm.get_clk_annotation(2) == "0:05:00"
+    assert "[%clk 0:05:00]" in mm.nodes[2].comment
+
+    # Clear clock on 1... c5
+    mm.set_clk_annotation(1, "")
+    assert mm.get_clk_annotation(1) == ""
+    assert "[%clk" not in mm.nodes[1].comment

@@ -1,7 +1,7 @@
 import os
 import qtawesome as qta
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize, QTimer
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
     QDockWidget,
@@ -21,10 +21,12 @@ from PyQt5.QtWidgets import (
     QMenu,
     QMessageBox,
     QDialog,
+    QApplication,
 )
 
 from gui.widgets.game_list_table import GameListTableWidget, GameListTableModel
 from gui.widgets.repertoire_tree_widget import RepertoireTreeWidget
+from gui.widgets.game_preview_widget import GamePreviewWidget
 from gui.dialogs.advanced_search_dialog import AdvancedSearchDialog
 from gui.dialogs.add_game_dialog import AddGameDialog
 from gui.dialogs.build_pos_index_dialog import BuildPosIndexDialog
@@ -49,6 +51,7 @@ class HomeWindow(QMainWindow):
     openEditorRequested = pyqtSignal()
     databaseOpened = pyqtSignal(str, str)
     repertoireOpenRequested = pyqtSignal(int, str)
+    themeChangeRequested = pyqtSignal(str)
 
     SCID_EXTENSIONS = {".si4", ".si5", ".sg4", ".sg5", ".sn4", ".sn5"}
 
@@ -56,7 +59,8 @@ class HomeWindow(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle("QChess — Home")
         self.resize(1200, 700)
-        self.is_dark = True
+        from PyQt5.QtCore import QSettings
+        self.is_dark = (QSettings("QChessApp", "Theme").value("theme", "dark") == "dark")
 
         self._current_db_path = None
         self._current_search_filter = None
@@ -96,6 +100,15 @@ class HomeWindow(QMainWindow):
         # -- Repertoire dock --
         self._init_repertoire_dock()
 
+        # -- Game preview dock --
+        self._init_preview_dock()
+
+        # Debounce timer for preview updates when navigating rows (100ms)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(100)
+        self._preview_timer.timeout.connect(self._load_selected_row_preview)
+
         # -- Toolbar & Menu --
         self._init_toolbar()
 
@@ -126,6 +139,139 @@ class HomeWindow(QMainWindow):
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self._repertoire_dock = dock
 
+        # Restore dock visibility from settings (default to True)
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("QChessApp", "WindowState")
+        val = settings.value("repertoire_dock_visible", True)
+        if isinstance(val, str):
+            dock_visible = (val.lower() == "true")
+        else:
+            dock_visible = bool(val)
+        self._repertoire_dock.setVisible(dock_visible)
+
+    # ──────────────────────── Game Preview Dock ────────────────────────
+
+    def _init_preview_dock(self):
+        """Create the Game Preview dock panel and attach it on the right."""
+        self.game_preview = GamePreviewWidget(self, is_dark=self.is_dark)
+        self.game_preview.openGameRequested.connect(self._on_game_selected)
+
+        dock = QDockWidget("Game Preview", self)
+        dock.setObjectName("GamePreviewDock")
+        dock.setWidget(self.game_preview)
+        dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable |
+            QDockWidget.DockWidgetFloatable |
+            QDockWidget.DockWidgetClosable
+        )
+        dock.setMinimumWidth(260)
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        self._preview_dock = dock
+        self._preview_dock.visibilityChanged.connect(self._on_preview_dock_visibility_changed)
+
+        # Hidden by default on welcome screen
+        self._preview_dock.hide()
+
+    def _on_preview_dock_visibility_changed(self, visible: bool):
+        if self.stack.currentIndex() == 1:
+            from PyQt5.QtCore import QSettings
+            settings = QSettings("QChessApp", "WindowState")
+            settings.setValue("preview_dock_visible", visible)
+        if visible:
+            self._load_selected_row_preview()
+
+    def _on_table_selection_changed(self, selected=None, deselected=None):
+        if hasattr(self, "_preview_timer"):
+            self._preview_timer.start()
+
+    def _on_table_data_changed(self, top_left=None, bottom_right=None, roles=None):
+        if hasattr(self, "_preview_dock") and self._preview_dock.isVisible():
+            if hasattr(self, "_preview_timer"):
+                self._preview_timer.start()
+
+    def _load_selected_row_preview(self):
+        if not hasattr(self, "_preview_dock") or not self._preview_dock.isVisible():
+            return
+        if not hasattr(self, "game_table") or not self.scid_client.is_running():
+            return
+
+        if getattr(self, "_pending_preview_req_id", None) is not None:
+            self.scid_client.cancel_callback(self._pending_preview_req_id)
+            self._pending_preview_req_id = None
+
+        row, game_item = self.game_table.get_selected_row_and_game()
+        if row is None:
+            self.game_preview.clear()
+            return
+
+        if not game_item:
+            page = row // self.game_table.model.CHUNK_SIZE
+            def on_chunk_ready(resp: dict):
+                self._pending_preview_req_id = None
+                if resp.get("status") == "ok":
+                    self.game_table.model.on_backend_response(resp)
+                curr_row, curr_game = self.game_table.get_selected_row_and_game()
+                if curr_row == row and curr_game:
+                    self._load_selected_row_preview()
+            self._pending_preview_req_id = self.scid_client.query_games(
+                page=page,
+                page_size=self.game_table.model.CHUNK_SIZE,
+                filter_dict=self.game_table.model.filters if not self.game_table.model.search_id else None,
+                sort_by=self.game_table.model.filters.get("sort_by"),
+                sort_direction=self.game_table.model.filters.get("sort_direction"),
+                sort_asc=self.game_table.model.sort_asc,
+                search_id=self.game_table.model.search_id,
+                callback=on_chunk_ready,
+            )
+            return
+
+        game_id = game_item.get("id", row)
+        display_id = game_item.get("id", game_id)
+        if isinstance(display_id, int):
+            display_id = display_id + 1
+
+        payload = {
+            "ID": str(display_id),
+            "White": game_item.get("white", "?"),
+            "EloW": str(game_item.get("white_elo", "")),
+            "Black": game_item.get("black", "?"),
+            "EloB": str(game_item.get("black_elo", "")),
+            "Result": game_item.get("result", "*"),
+            "ECO": game_item.get("eco", ""),
+            "Date": game_item.get("date", ""),
+            "Event": game_item.get("event", ""),
+            "Site": game_item.get("site", ""),
+            "Round": str(game_item.get("round", "")),
+            "matching_plies": game_item.get("matching_plies") or [],
+            "match_count": game_item.get("match_count", len(game_item.get("matching_plies") or [])),
+            "_matching_plies": game_item.get("matching_plies") or [],
+            "_id": game_id,
+            "_row_idx": row,
+            "_total_rows": self.game_table.model.total_count,
+        }
+
+        def on_pgn(resp: dict):
+            self._pending_preview_req_id = None
+            if resp.get("status") == "ok":
+                pgn_text = resp.get("data", {}).get("pgn", "")
+                curr_row, curr_game = self.game_table.get_selected_row_and_game()
+                if curr_row == row:
+                    self.game_preview.load_game(payload, pgn_text)
+
+        self._pending_preview_req_id = self.scid_client.get_pgn(int(game_id), callback=on_pgn)
+
+    def closeEvent(self, event):
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("QChessApp", "WindowState")
+        if hasattr(self, "_repertoire_dock"):
+            is_open = not self._repertoire_dock.isHidden()
+            settings.setValue("repertoire_dock_visible", is_open)
+        if hasattr(self, "_preview_dock") and self.stack.currentIndex() == 1:
+            is_open = not self._preview_dock.isHidden()
+            settings.setValue("preview_dock_visible", is_open)
+        super().closeEvent(event)
+
     # ──────────────────────── Welcome Page ────────────────────────
 
     def _build_welcome_page(self) -> QWidget:
@@ -145,17 +291,17 @@ class HomeWindow(QMainWindow):
         layout.addWidget(icon_label)
 
         # Title
-        title = QLabel("QChess")
-        title.setAlignment(Qt.AlignCenter)
-        title.setFont(QFont("Segoe UI", 28, QFont.Bold))
-        title.setStyleSheet("color: #e0e0e0;")
-        layout.addWidget(title)
+        self.welcome_title = QLabel("QChess")
+        self.welcome_title.setAlignment(Qt.AlignCenter)
+        self.welcome_title.setFont(QFont("Segoe UI", 28, QFont.Bold))
+        self.welcome_title.setStyleSheet("color: #f8fafc;" if self.is_dark else "color: #0f172a;")
+        layout.addWidget(self.welcome_title)
 
-        subtitle = QLabel("Chess database browser, analysis & management")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setFont(QFont("Segoe UI", 12))
-        subtitle.setStyleSheet("color: #888;")
-        layout.addWidget(subtitle)
+        self.welcome_subtitle = QLabel("Chess database browser, analysis & management")
+        self.welcome_subtitle.setAlignment(Qt.AlignCenter)
+        self.welcome_subtitle.setFont(QFont("Segoe UI", 12))
+        self.welcome_subtitle.setStyleSheet("color: #94a3b8;" if self.is_dark else "color: #64748b;")
+        layout.addWidget(self.welcome_subtitle)
 
         layout.addSpacing(16)
 
@@ -192,11 +338,11 @@ class HomeWindow(QMainWindow):
         layout.addSpacing(20)
 
         # Recent files
-        recent_header = QLabel("Recent Databases")
-        recent_header.setAlignment(Qt.AlignCenter)
-        recent_header.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        recent_header.setStyleSheet("color: #aaa;")
-        layout.addWidget(recent_header)
+        self.recent_header = QLabel("Recent Databases")
+        self.recent_header.setAlignment(Qt.AlignCenter)
+        self.recent_header.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.recent_header.setStyleSheet("color: #94a3b8;" if self.is_dark else "color: #475569;")
+        layout.addWidget(self.recent_header)
 
         self.recent_files_layout = QVBoxLayout()
         self.recent_files_layout.setAlignment(Qt.AlignCenter)
@@ -238,8 +384,11 @@ class HomeWindow(QMainWindow):
         self.game_table = GameListTableWidget(self.scid_client, self)
         self.game_table.gameSelected.connect(self._on_game_selected)
         self.game_table.loadFinished.connect(self._on_load_finished)
+        self.game_table.filterStateChanged.connect(self._on_filter_state_changed)
         self.game_table.gameDeleted.connect(lambda gid: self.status_bar.showMessage(f"Game #{gid + 1} marked as DELETED and saved.", 5000))
         self.game_table.gameUndeleted.connect(lambda gid: self.status_bar.showMessage(f"Game #{gid + 1} restored and saved.", 5000))
+        self.game_table.table.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
+        self.game_table.model.dataChanged.connect(self._on_table_data_changed)
         layout.addWidget(self.game_table, 1)
 
         return page
@@ -291,12 +440,6 @@ class HomeWindow(QMainWindow):
         self.search_act.triggered.connect(lambda: self.open_search_dialog())
         self.toolbar.addAction(self.search_act)
 
-        build_idx_act = QAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Position Index", self)
-        build_idx_act.setToolTip("Build Fast Companion Position Index (.pos.idx) [Ctrl+Shift+B]")
-        build_idx_act.setShortcut("Ctrl+Shift+B")
-        build_idx_act.triggered.connect(self.build_position_index)
-        self.toolbar.addAction(build_idx_act)
-
         settings_act = QAction(qta.icon("fa5s.cog", color="#a9aea7"), "Search Settings", self)
         settings_act.setToolTip("Configure worker threads and search performance [Ctrl+Alt+S]")
         settings_act.setShortcut("Ctrl+Alt+S")
@@ -330,6 +473,27 @@ class HomeWindow(QMainWindow):
         self.columns_btn.setMenu(self.columns_menu)
         self.columns_menu.aboutToShow.connect(self._populate_columns_menu)
         self.toolbar.addWidget(self.columns_btn)
+
+        self.toolbar.addSeparator()
+
+        # Theme switcher button with popup menu
+        self.theme_btn = QToolButton(self)
+        self.theme_btn.setIcon(qta.icon("fa5s.moon" if self.is_dark else "fa5s.sun", color="#a9aea7" if self.is_dark else "#2563eb"))
+        self.theme_btn.setText("Theme")
+        self.theme_btn.setToolTip("Switch Application Theme [Ctrl+D / Ctrl+L]")
+        self.theme_btn.setPopupMode(QToolButton.InstantPopup)
+        self.theme_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+
+        self.theme_menu = QMenu(self.theme_btn)
+        self.theme_btn.setMenu(self.theme_menu)
+
+        dark_act = self.theme_menu.addAction(qta.icon("fa5s.moon", color="#a9aea7"), "Dark Theme")
+        dark_act.triggered.connect(lambda: self.themeChangeRequested.emit("dark"))
+
+        light_act = self.theme_menu.addAction(qta.icon("fa5s.sun", color="#f59e0b"), "Light Theme")
+        light_act.triggered.connect(lambda: self.themeChangeRequested.emit("light"))
+
+        self.toolbar.addWidget(self.theme_btn)
 
         # Menu bar
         self._init_menubar()
@@ -405,7 +569,7 @@ class HomeWindow(QMainWindow):
 
         search_menu.addSeparator()
 
-        build_idx_act = search_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Position Index (.pos.idx)...")
+        build_idx_act = search_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.pos.idx & .tree.idx)...")
         build_idx_act.setShortcut("Ctrl+Shift+B")
         build_idx_act.triggered.connect(self.build_position_index)
 
@@ -417,7 +581,7 @@ class HomeWindow(QMainWindow):
 
         # Tools Menu
         tools_menu = menubar.addMenu("&Tools")
-        t_build_act = tools_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Position Index (.pos.idx)...")
+        t_build_act = tools_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.pos.idx & .tree.idx)...")
         t_build_act.setShortcut("Ctrl+Shift+B")
         t_build_act.triggered.connect(self.build_position_index)
 
@@ -435,10 +599,27 @@ class HomeWindow(QMainWindow):
         toggle_act.setIcon(qta.icon("fa5s.chess-board", color="#a9aea7"))
         view_menu.addAction(toggle_act)
 
+        toggle_preview_act = self._preview_dock.toggleViewAction()
+        toggle_preview_act.setText("Game Preview")
+        toggle_preview_act.setShortcut("Ctrl+Shift+P")
+        toggle_preview_act.setIcon(qta.icon("fa5s.eye", color="#a9aea7"))
+        view_menu.addAction(toggle_preview_act)
+
         view_menu.addSeparator()
 
         columns_submenu = view_menu.addMenu(qta.icon("fa5s.columns", color="#a9aea7"), "Columns")
         columns_submenu.aboutToShow.connect(lambda: self._populate_menu_columns(columns_submenu))
+
+        view_menu.addSeparator()
+
+        theme_submenu = view_menu.addMenu(qta.icon("fa5s.palette", color="#a9aea7"), "Theme")
+        dark_menu_act = theme_submenu.addAction(qta.icon("fa5s.moon", color="#a9aea7"), "Dark")
+        dark_menu_act.setShortcut("Ctrl+D")
+        dark_menu_act.triggered.connect(lambda: self.themeChangeRequested.emit("dark"))
+
+        light_menu_act = theme_submenu.addAction(qta.icon("fa5s.sun", color="#f59e0b"), "Light")
+        light_menu_act.setShortcut("Ctrl+L")
+        light_menu_act.triggered.connect(lambda: self.themeChangeRequested.emit("light"))
 
     def _populate_columns_menu(self):
         self._populate_menu_columns(self.columns_menu)
@@ -479,7 +660,7 @@ class HomeWindow(QMainWindow):
             self._execute_advanced_search(filter_dict)
 
     def _execute_advanced_search(self, filter_dict: dict):
-        """Execute search using the high-performance scid-mgr backend."""
+        """Execute search using the high-performance 2-phase scid-mgr SearchSession architecture."""
         self._current_search_filter = filter_dict
         if not self._current_db_path:
             return
@@ -494,29 +675,110 @@ class HomeWindow(QMainWindow):
                 self.progress_bar.hide()
                 return
 
-        def on_query_finished(resp: dict):
-            self.progress_bar.hide()
-            if resp.get("status") == "ok":
-                data = resp.get("data", {})
-                total = data.get("total", 0)
-                self.game_table.model.filters = dict(filter_dict) if filter_dict else {}
-                self.btn_clear_search.show()
-                self.status_bar.showMessage(f"Search complete: {total:,} games matched.", 8000)
-                self.game_table.set_info_text(f"{total:,} games matched (Filter Active)")
-            else:
-                err = resp.get("error", "Unknown error")
-                self.status_bar.showMessage(f"Search failed: {err}", 8000)
+        # ── Option A: CQL Language Search ────────────────────────────
+        if filter_dict.get("query"):
+            def on_cql_resp(resp: dict):
+                self.progress_bar.hide()
+                if resp.get("status") == "ok":
+                    data = resp.get("data", {})
+                    search_id = data.get("search_id")
+                    matched = data.get("matched_count", 0)
+                    dur = data.get("duration_ms", 0)
+                    self.game_table.load_search_session(search_id, matched, filter_dict)
+                    self.btn_clear_search.show()
+                    self.status_bar.showMessage(f"CQL Search complete: {matched:,} games matched ({dur}ms).", 8000)
+                else:
+                    err = resp.get("error", "Unknown error")
+                    self.status_bar.showMessage(f"CQL Search failed: {err}", 8000)
 
-        self.scid_client.query_games(page=0, page_size=100, filter_dict=filter_dict, callback=on_query_finished)
+            self.scid_client.search_cql(filter_dict["query"], callback=on_cql_resp)
+
+        # ── Option B: Direct Position / FEN Search ───────────────────
+        elif filter_dict.get("fen"):
+            def on_pos_resp(resp: dict):
+                self.progress_bar.hide()
+                if resp.get("status") == "ok":
+                    data = resp.get("data", {})
+                    search_id = data.get("search_id")
+                    matched = data.get("matched_count", 0)
+                    dur = data.get("duration_ms", 0)
+                    self.game_table.load_search_session(search_id, matched, filter_dict)
+                    self.btn_clear_search.show()
+                    self.status_bar.showMessage(f"Position Search complete: {matched:,} games matched ({dur}ms).", 8000)
+                else:
+                    err = resp.get("error", "Unknown error")
+                    self.status_bar.showMessage(f"Position Search failed: {err}", 8000)
+
+            self.scid_client.search_position(
+                fen=filter_dict["fen"],
+                turn=filter_dict.get("turn"),
+                match_mode=filter_dict.get("match_mode"),
+                max_ply=filter_dict.get("max_ply"),
+                callback=on_pos_resp,
+            )
+
+        # ── Option C: Material Search ─────────────────────────────────
+        elif filter_dict.get("material"):
+            def on_mat_resp(resp: dict):
+                self.progress_bar.hide()
+                if resp.get("status") == "ok":
+                    data = resp.get("data", {})
+                    search_id = data.get("search_id")
+                    matched = data.get("matched_count", 0)
+                    dur = data.get("duration_ms", 0)
+                    self.game_table.load_search_session(search_id, matched, filter_dict)
+                    self.btn_clear_search.show()
+                    self.status_bar.showMessage(f"Material Search complete: {matched:,} games matched ({dur}ms).", 8000)
+                else:
+                    err = resp.get("error", "Unknown error")
+                    self.status_bar.showMessage(f"Material Search failed: {err}", 8000)
+
+            self.scid_client.search_material(filter_dict["material"], callback=on_mat_resp)
+
+        # ── Option D: Standard Game Info / Header Filter ─────────────
+        else:
+            def on_query_finished(resp: dict):
+                self.progress_bar.hide()
+                if resp.get("status") == "ok":
+                    data = resp.get("data", {})
+                    total = data.get("total", 0)
+                    self.game_table.load_database(total, active_filters)
+                    if total > 0:
+                        self.game_table.table.selectRow(0)
+                    self.btn_clear_search.show()
+                    self.status_bar.showMessage(f"Search complete: {total:,} games matched.", 8000)
+                else:
+                    err = resp.get("error", "Unknown error")
+                    self.status_bar.showMessage(f"Search failed: {err}", 8000)
+
+            active_filters = dict(filter_dict) if filter_dict else {}
+            quick_text = self.game_table.filter_edit.text().strip()
+            if quick_text and "player" not in active_filters:
+                active_filters["player"] = quick_text
+
+            self.btn_clear_search.show()
+            self.game_table.model.set_filters(active_filters)
+            self.scid_client.query_games(page=0, page_size=self.game_table.model.CHUNK_SIZE, filter_dict=active_filters, callback=on_query_finished)
+
+    def _on_filter_state_changed(self, active: bool):
+        if hasattr(self, "btn_clear_search"):
+            self.btn_clear_search.setVisible(active)
 
     def clear_search_filter(self):
         """Clears active search filters and resets table to full database."""
         self._current_search_filter = None
         self.btn_clear_search.hide()
 
-        if self.scid_client.is_running():
-            self.game_table.model.set_filters({})
-            self.status_bar.showMessage("Search filter cleared.", 4000)
+        if hasattr(self, "game_table"):
+            self.game_table.filter_edit.clear()
+            self.game_table.model.search_id = None
+            if self.scid_client.is_running():
+                total_games = self._current_db_stats.get("total_games", 0) if hasattr(self, "_current_db_stats") else 0
+                if total_games > 0:
+                    self.game_table.load_database(total_games, None)
+                else:
+                    self.game_table.model.set_filters({})
+                self.status_bar.showMessage("Search filter cleared.", 4000)
 
     def _on_search_progress(self, progress_data: dict):
         percent = int(progress_data.get("percent", 0))
@@ -525,6 +787,8 @@ class HomeWindow(QMainWindow):
         matches = progress_data.get("matches", 0)
         self.progress_bar.setValue(percent)
         self.status_bar.showMessage(f"Searching: {scanned:,}/{total:,} scanned ({percent}%) — {matches:,} matches found")
+        if percent >= 100:
+            self.progress_bar.hide()
 
     def _on_scid_error(self, err_msg: str):
         self.status_bar.showMessage(f"[Backend Error] {err_msg}", 8000)
@@ -812,20 +1076,25 @@ class HomeWindow(QMainWindow):
             self.btn_clear_search.hide()
 
         basename = os.path.basename(db_path)
-        self.status_bar.showMessage(f"Opening {basename}...")
-        self.progress_bar.setValue(0)
+        self.status_bar.showMessage(f"Opening database '{basename}'... Please wait.")
+        self.progress_bar.setRange(0, 0)
         self.progress_bar.show()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         if not self.scid_client.is_running():
             settings = QSettings("QChessApp", "SearchConfig")
             threads = int(settings.value("worker_threads", 0))
             ok = self.scid_client.start(db_path, threads=threads if threads > 0 else None)
             if not ok:
+                QApplication.restoreOverrideCursor()
+                self.progress_bar.setRange(0, 100)
                 self.progress_bar.hide()
                 QMessageBox.critical(self, "Backend Error", "Failed to start scid-mgr backend process.")
                 return
 
         def on_opened(resp: dict):
+            QApplication.restoreOverrideCursor()
+            self.progress_bar.setRange(0, 100)
             self.progress_bar.hide()
             if resp.get("status") == "ok":
                 stats = resp.get("data", {}).get("stats", {})
@@ -836,6 +1105,11 @@ class HomeWindow(QMainWindow):
                 self.db_info_label.setText(f"📁 [{fmt.upper()}] {basename}")
                 self.setWindowTitle(f"QChess — {basename}")
                 self.stack.setCurrentIndex(1)
+                settings = QSettings("QChessApp", "WindowState")
+                val = settings.value("preview_dock_visible", False)
+                dock_visible = (val.lower() == "true") if isinstance(val, str) else bool(val)
+                if hasattr(self, "_preview_dock"):
+                    self._preview_dock.setVisible(dock_visible)
                 self.status_bar.showMessage(f"Opened {basename} ({total_games:,} games).", 6000)
                 self._add_to_recent(db_path)
                 self.databaseOpened.emit(db_path, db_path)
@@ -847,21 +1121,12 @@ class HomeWindow(QMainWindow):
         self.scid_client.open_database(db_path, callback=on_opened)
 
     def build_position_index(self):
-        """Open dialog to construct or rebuild the fast companion position index (.pos.idx)."""
+        """Open dialog to construct or rebuild fast companion database indexes (.pos.idx & .tree.idx)."""
         if not self._current_db_path:
             QMessageBox.information(
                 self,
                 "No Database Opened",
-                "Please open or create a SCID database before building a position index."
-            )
-            return
-
-        ext = os.path.splitext(self._current_db_path)[1].lower()
-        if ext not in self.SCID_EXTENSIONS:
-            QMessageBox.warning(
-                self,
-                "Unsupported Operation",
-                "Position index (.pos.idx) is only applicable to SCID (.si5/.si4) databases."
+                "Please open or create a database before building fast indexes."
             )
             return
 
@@ -879,7 +1144,10 @@ class HomeWindow(QMainWindow):
         self.gameSelected.emit(game_data)
 
     def _on_load_finished(self, total_rows: int):
-        if self._current_search_filter:
+        has_filter = bool(self._current_search_filter) or (
+            hasattr(self, "game_table") and self.game_table.model.has_active_filter()
+        )
+        if has_filter:
             self.game_table.set_info_text(f"{total_rows:,} games matched (Filter Active)")
         else:
             self.game_table.set_info_text(f"{total_rows:,} games")
@@ -888,6 +1156,8 @@ class HomeWindow(QMainWindow):
         """Return to the welcome screen."""
         self.stack.setCurrentIndex(0)
         self.setWindowTitle("QChess — Home")
+        if hasattr(self, "_preview_dock"):
+            self._preview_dock.hide()
 
     # ──────────────────────── Recent Files ────────────────────────
 
@@ -939,62 +1209,127 @@ class HomeWindow(QMainWindow):
 
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
+        if hasattr(self, "welcome_title"):
+            self.welcome_title.setStyleSheet("color: #f8fafc;" if is_dark else "color: #0f172a;")
+        if hasattr(self, "welcome_subtitle"):
+            self.welcome_subtitle.setStyleSheet("color: #94a3b8;" if is_dark else "color: #64748b;")
+        if hasattr(self, "recent_header"):
+            self.recent_header.setStyleSheet("color: #94a3b8;" if is_dark else "color: #475569;")
+        if hasattr(self, "db_info_label"):
+            self.db_info_label.setStyleSheet("color: #94a3b8; padding: 4px;" if is_dark else "color: #475569; padding: 4px;")
         if hasattr(self, "create_db_btn"):
             self.create_db_btn.setStyleSheet(self._primary_button_style())
         if hasattr(self, "open_db_btn"):
             self.open_db_btn.setStyleSheet(self._secondary_button_style())
         if hasattr(self, "new_analysis_btn"):
             self.new_analysis_btn.setStyleSheet(self._secondary_button_style())
+        if hasattr(self, "theme_btn"):
+            self.theme_btn.setIcon(qta.icon("fa5s.moon" if is_dark else "fa5s.sun", color="#a9aea7" if is_dark else "#2563eb"))
+        if hasattr(self, "repertoire_tree"):
+            self.repertoire_tree.set_theme(is_dark)
+        if hasattr(self, "game_preview"):
+            self.game_preview.set_theme(is_dark)
+        if hasattr(self, "recent_files_layout"):
+            self._populate_recent_files()
 
     def _primary_button_style(self) -> str:
+        if self.is_dark:
+            return """
+                QPushButton {
+                    background-color: #2563eb;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 10px 24px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3b82f6;
+                }
+                QPushButton:pressed {
+                    background-color: #1d4ed8;
+                }
+            """
         return """
             QPushButton {
-                background-color: #4a90d9;
-                color: white;
+                background-color: #2563eb;
+                color: #ffffff;
                 border: none;
                 border-radius: 8px;
                 padding: 10px 24px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #5aa0e9;
+                background-color: #1d4ed8;
             }
             QPushButton:pressed {
-                background-color: #3a80c9;
+                background-color: #1e40af;
             }
         """
 
     def _secondary_button_style(self) -> str:
+        if self.is_dark:
+            return """
+                QPushButton {
+                    background-color: transparent;
+                    color: #e2e8f0;
+                    border: 1px solid #475569;
+                    border-radius: 8px;
+                    padding: 8px 24px;
+                }
+                QPushButton:hover {
+                    background-color: #334155;
+                    border-color: #64748b;
+                }
+                QPushButton:pressed {
+                    background-color: #1e293b;
+                }
+            """
         return """
             QPushButton {
-                background-color: transparent;
-                color: #ccc;
-                border: 1px solid #555;
+                background-color: #ffffff;
+                color: #0f172a;
+                border: 1px solid #cbd5e1;
                 border-radius: 8px;
                 padding: 8px 24px;
             }
             QPushButton:hover {
-                background-color: #333;
-                border-color: #777;
+                background-color: #f1f5f9;
+                border-color: #94a3b8;
             }
             QPushButton:pressed {
-                background-color: #2a2a2a;
+                background-color: #e2e8f0;
             }
         """
 
     def _recent_button_style(self) -> str:
+        if self.is_dark:
+            return """
+                QPushButton {
+                    background-color: transparent;
+                    color: #94a3b8;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                    text-align: left;
+                }
+                QPushButton:hover {
+                    background-color: #334155;
+                    color: #f1f5f9;
+                }
+            """
         return """
             QPushButton {
                 background-color: transparent;
-                color: #aaa;
+                color: #475569;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 16px;
                 text-align: left;
             }
             QPushButton:hover {
-                background-color: #2a2a2a;
-                color: #ddd;
+                background-color: #e2e8f0;
+                color: #0f172a;
             }
         """
 

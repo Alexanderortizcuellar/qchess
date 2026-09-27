@@ -52,7 +52,7 @@ class AnalysisSummaryWidget(QWidget):
         self.vs_label = QLabel("vs")
         self.vs_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.vs_label.setAlignment(Qt.AlignCenter)
-        self.vs_label.setStyleSheet("color: #e6912c;")
+        self.vs_label.setStyleSheet("color: #2563eb;" if not self.is_dark else "color: #3b82f6;")
         
         self.black_label = QLabel("Black")
         self.black_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
@@ -92,10 +92,10 @@ class AnalysisSummaryWidget(QWidget):
             card_border = "#403d39"
             text_color = "#ffffff"
         else:
-            bg_color = "#f1f1f1"
-            card_bg = "#e1e1e1"
-            card_border = "#cccccc"
-            text_color = "#312e2b"
+            bg_color = "#ffffff"
+            card_bg = "#f8fafc"
+            card_border = "#e2e8f0"
+            text_color = "#0f172a"
             
         self.setStyleSheet(f"""
             QWidget {{
@@ -114,6 +114,7 @@ class AnalysisSummaryWidget(QWidget):
         
         self.white_label.setStyleSheet(f"color: {text_color};")
         self.black_label.setStyleSheet(f"color: {text_color};")
+        self.vs_label.setStyleSheet("color: #3b82f6;" if self.is_dark else "color: #2563eb;")
 
     def update_data(self, game):
         self.game = game
@@ -139,7 +140,9 @@ class AnalysisSummaryWidget(QWidget):
         for item in STANDARD_CLASSIFICATIONS:
             stats["white"][item["id"]] = 0
             stats["black"][item["id"]] = 0
-
+            
+        self.stats = stats
+        
         # Traverse mainline
         curr = game
         while curr.variations:
@@ -148,7 +151,7 @@ class AnalysisSummaryWidget(QWidget):
                 continue
                 
             board = curr.parent.board()
-            turn = board.turn
+            turn = "white" if board.turn == chess.WHITE else "black"
             
             cls_val = None
             if hasattr(curr, "nags") and curr.nags:
@@ -157,15 +160,18 @@ class AnalysisSummaryWidget(QWidget):
                     if nag in NAG_TO_CLS:
                         cls_val = NAG_TO_CLS[nag]
                         break
+                        
+            if cls_val is None and curr.comment:
+                cls_match = re.search(r'\[%cls\s+(\d+)\]', curr.comment)
+                if cls_match:
+                    cls_val = int(cls_match.group(1))
                                 
             if cls_val is not None:
-                player_key = "white" if turn == chess.WHITE else "black"
-                if cls_val not in stats[player_key]:
-                    stats[player_key][cls_val] = 0
-                stats[player_key][cls_val] += 1
-
-        self.stats = stats
-        self.render_stats()
+                if cls_val not in stats[turn]:
+                    stats[turn][cls_val] = 0
+                stats[turn][cls_val] += 1
+            
+        self.render_rows()
 
     def clear_rows(self):
         while self.container_layout.count():
@@ -173,29 +179,28 @@ class AnalysisSummaryWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-    def render_stats(self):
+    def render_rows(self):
         self.clear_rows()
-        
-        # Build the dynamic list of classifications to display.
-        # This handles extensibility: if there are classifications in the stats that are not standard,
-        # we can append them to the end of standard list.
-        display_list = list(STANDARD_CLASSIFICATIONS)
-        standard_ids = {item["id"] for item in display_list}
-        
-        all_ids = set(self.stats["white"].keys()).union(self.stats["black"].keys())
-        for extra_id in all_ids:
-            if extra_id not in standard_ids:
-                # Add unknown classifications dynamically
-                display_list.append({
-                    "id": extra_id,
-                    "name": f"Class {extra_id}",
-                    "color_dark": "#90a4ae",
-                    "color_light": "#78909c",
-                    "text_color": "#ffffff"
-                })
+        if not self.stats:
+            return
 
-        # Add a header row
+        # Filter out classifications with 0 occurrences on both sides
+        display_list = []
+        for item in STANDARD_CLASSIFICATIONS:
+            cid = item["id"]
+            if self.stats["white"].get(cid, 0) > 0 or self.stats["black"].get(cid, 0) > 0:
+                display_list.append(item)
+                
+        if not display_list:
+            lbl = QLabel("No move classifications found.\nRun game review or analysis first.")
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("color: #8b8987; font-style: italic; padding: 20px;")
+            self.container_layout.addWidget(lbl)
+            return
+
+        # Header Row
         header_row = QFrame()
+        header_row.setStyleSheet("background: transparent;")
         header_layout = QHBoxLayout(header_row)
         header_layout.setContentsMargins(8, 4, 8, 4)
         
@@ -232,10 +237,12 @@ class AnalysisSummaryWidget(QWidget):
             # Row frame
             row_frame = QFrame()
             row_frame.setFrameShape(QFrame.StyledPanel)
+            row_bg = "#2b2824" if self.is_dark else "#f8fafc"
+            row_border = "none" if self.is_dark else "1px solid #e2e8f0"
             row_frame.setStyleSheet(f"""
                 QFrame {{
-                    background-color: {"#2b2824" if self.is_dark else "#e8e8e8"};
-                    border: none;
+                    background-color: {row_bg};
+                    border: {row_border};
                     border-radius: 4px;
                 }}
             """)

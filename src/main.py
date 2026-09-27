@@ -22,14 +22,17 @@ def main():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     assets_dir = os.path.join(os.path.dirname(current_dir), "assets")
     
-    pix = QPixmap(os.path.join(assets_dir, "icon.png"))
+    pix = QPixmap(os.path.join(assets_dir, "icon.jpg"))
     pix = pix.scaledToWidth(528, Qt.SmoothTransformation)
 
     # Create splash screen
     splash = QSplashScreen(pix, Qt.WindowStaysOnTopHint)
     splash.show()
-    # load stylesheet
-    style = load_stylesheet(os.path.join(assets_dir, "style.qss"))
+    # load stylesheet for saved theme
+    from PyQt5.QtCore import QSettings
+    saved_theme = QSettings("QChessApp", "Theme").value("theme", "dark")
+    qss_filename = "style.qss" if saved_theme == "dark" else "light_style.qss"
+    style = load_stylesheet(os.path.join(assets_dir, qss_filename))
     app.setStyleSheet(style)
     # import application controller
     from gui.app_controller import ApplicationController
@@ -38,7 +41,7 @@ def main():
 
     controller = ApplicationController()
     controller.set_icon(QIcon(pix))
-    controller.set_style("dark")
+    controller.set_style(saved_theme)
     controller.show()
 
     sys.exit(app.exec_())

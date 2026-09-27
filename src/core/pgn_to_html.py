@@ -214,21 +214,21 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
     def result(self) -> str:
         light_style = f"""
         <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; }}
-            .move {{display: inline; }}
-            .num {{ color: #757575; font-weight: bold; margin-right: 2px; }}
-            .mv {{ font-family: {self.font_family}; color: #1A1A1A; text-decoration: none; padding: 4px 2px; }}
-            .mv:hover {{ background: #eef6ff; }}
-            .mv.highlight {{ background: #dbeafe; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; font-size: 20px; line-height: 1.6; color: #0f172a; }}
+            .move {{ display: inline; }}
+            .num {{ color: #64748b; font-weight: bold; margin-right: 2px; }}
+            .mv {{ font-family: {self.font_family}; color: #0f172a; text-decoration: none; padding: 4px 2px; border-radius: 3px; }}
+            .mv:hover {{ background: #eff6ff; color: #1e40af; }}
+            .mv.highlight {{ background: #dbeafe; color: #1e3a8a; font-weight: bold; }}
             .mv.cls-inaccuracy {{ color: #b58900; }}
             .mv.cls-mistake {{ color: #e65100; }}
             .mv.cls-blunder {{ color: #b71c1c; font-weight: bold; }}
-            .mv.cls-brilliant {{ color: #28c2a4; font-weight: bold; }}
+            .mv.cls-brilliant {{ color: #0d9488; font-weight: bold; }}
             .mv.cls-miss {{ color: #d32f2f; }}
-            .cmt {{ color: #388E3C; font-style: italic; margin-left: 4px; }}
-            .variation {{ color: #9aa0a6; }}
-            .hdr {{ color: #555; font-family: monospace; }}
-            .res {{ font-weight: bold; }}
+            .cmt {{ color: #15803d; font-style: italic; margin-left: 4px; }}
+            .variation {{ color: #64748b; }}
+            .hdr {{ color: #475569; font-family: monospace; }}
+            .res {{ font-weight: bold; color: #2563eb; }}
         </style>
         """
         dark_style = f"""
@@ -250,7 +250,6 @@ class HtmlExporter(HtmlExporterMixin, chess.pgn.BaseVisitor[str]):
                 .res {{ color: #FFB74D; font-weight: bold; }}
             </style>
             """
-
 
         style = dark_style if self.dark_mode else light_style
         return style + "<div class='moves'>" + " ".join(self.parts) + "</div>"

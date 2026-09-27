@@ -22,10 +22,17 @@ class AddGameDialog(QDialog):
     Includes instant PGN header validation and preview.
     """
 
+    def _is_dark(self) -> bool:
+        if self.parent() is not None and hasattr(self.parent(), "is_dark"):
+            return bool(self.parent().is_dark)
+        from PyQt5.QtCore import QSettings
+        return QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Game to Database")
         self.resize(600, 500)
+        is_dark = self._is_dark()
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(16, 16, 16, 16)
@@ -34,7 +41,7 @@ class AddGameDialog(QDialog):
         info_lbl = QLabel(
             "Paste or write a complete PGN game below. Headers and moves will be validated."
         )
-        info_lbl.setStyleSheet("color: #9ca3af; font-size: 11px;")
+        info_lbl.setStyleSheet(f"color: {'#9ca3af' if is_dark else '#475569'}; font-size: 11px;")
         main_layout.addWidget(info_lbl)
 
         # PGN Text Editor
@@ -55,22 +62,40 @@ class AddGameDialog(QDialog):
 
         # Quick Headers Preview
         self.preview_box = QGroupBox("Detected Game Info")
-        self.preview_box.setStyleSheet("""
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #403d39;
-                border-radius: 6px;
-                margin-top: 6px;
-                padding: 8px;
-                background-color: #21201d;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 4px;
-                color: #a9aea7;
-            }
-        """)
+        if is_dark:
+            self.preview_box.setStyleSheet("""
+                QGroupBox {
+                    font-weight: bold;
+                    border: 1px solid #403d39;
+                    border-radius: 6px;
+                    margin-top: 6px;
+                    padding: 8px;
+                    background-color: #21201d;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px;
+                    color: #a9aea7;
+                }
+            """)
+        else:
+            self.preview_box.setStyleSheet("""
+                QGroupBox {
+                    font-weight: bold;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    margin-top: 6px;
+                    padding: 8px;
+                    background-color: #f8fafc;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 10px;
+                    padding: 0 4px;
+                    color: #2563eb;
+                }
+            """)
         prev_layout = QFormLayout(self.preview_box)
         prev_layout.setContentsMargins(8, 8, 8, 8)
         prev_layout.setSpacing(6)
@@ -85,7 +110,7 @@ class AddGameDialog(QDialog):
 
         # Buttons
         btn_box = QHBoxLayout()
-        btn_paste = QPushButton(qta.icon("fa5s.paste", color="#a9aea7"), "Paste from Clipboard")
+        btn_paste = QPushButton(qta.icon("fa5s.paste", color="#a9aea7" if is_dark else "#475569"), "Paste from Clipboard")
         btn_paste.clicked.connect(self._paste_clipboard)
         btn_box.addWidget(btn_paste)
 
@@ -96,26 +121,29 @@ class AddGameDialog(QDialog):
         btn_box.addWidget(btn_cancel)
 
         self.btn_add = QPushButton(qta.icon("fa5s.plus", color="#ffffff"), "Add Game")
-        self.btn_add.setStyleSheet("""
-            QPushButton {
+        disabled_bg = "#374151" if is_dark else "#e2e8f0"
+        disabled_fg = "#6b7280" if is_dark else "#94a3b8"
+        disabled_border = "#4b5563" if is_dark else "#cbd5e1"
+        self.btn_add.setStyleSheet(f"""
+            QPushButton {{
                 font-weight: bold;
                 background-color: #2563eb;
                 color: white;
                 border: 1px solid #1d4ed8;
                 border-radius: 4px;
                 padding: 6px 18px;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 background-color: #3b82f6;
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background-color: #1d4ed8;
-            }
-            QPushButton:disabled {
-                background-color: #374151;
-                color: #6b7280;
-                border: 1px solid #4b5563;
-            }
+            }}
+            QPushButton:disabled {{
+                background-color: {disabled_bg};
+                color: {disabled_fg};
+                border: 1px solid {disabled_border};
+            }}
         """)
         self.btn_add.clicked.connect(self._on_accept)
         self.btn_add.setEnabled(False)

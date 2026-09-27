@@ -25,8 +25,13 @@ class DatabaseSettingsDialog(QDialog):
         self.max_system_cpus = os.cpu_count() or 4
 
         self._init_ui()
-        self._apply_dark_theme()
+        self._apply_theme()
         self._load_settings()
+
+    def _is_dark(self) -> bool:
+        if self.parent() is not None and hasattr(self.parent(), "is_dark"):
+            return bool(self.parent().is_dark)
+        return QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -97,80 +102,158 @@ class DatabaseSettingsDialog(QDialog):
 
         layout.addLayout(btn_box)
 
-    def _apply_dark_theme(self):
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e1e;
-                color: #e0e0e0;
-            }
-            QGroupBox {
-                border: 1px solid #3c3c3c;
-                border-radius: 6px;
-                margin-top: 10px;
-                padding-top: 10px;
-                font-weight: bold;
-                color: #e0e0e0;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 6px;
-                color: #4a90d9;
-            }
-            QLabel {
-                color: #e0e0e0;
-            }
-            QSpinBox {
-                background-color: #2d2d2d;
-                color: #ffffff;
-                border: 1px solid #444;
-                border-radius: 4px;
-                padding: 4px 8px;
-                min-width: 90px;
-            }
-            QSpinBox:focus {
-                border-color: #4a90d9;
-            }
-            QSlider::groove:horizontal {
-                border: 1px solid #3c3c3c;
-                height: 6px;
-                background: #2d2d2d;
-                border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #4a90d9;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #e0e0e0;
-                border: 1px solid #777;
-                width: 14px;
-                margin-top: -5px;
-                margin-bottom: -5px;
-                border-radius: 7px;
-            }
-            #btnSave {
-                background-color: #1976d2;
-                color: white;
-                font-weight: bold;
-                border: none;
-                border-radius: 4px;
-                padding: 7px 18px;
-            }
-            #btnSave:hover {
-                background-color: #1e88e5;
-            }
-            #btnCancel {
-                background-color: #333333;
-                color: #cccccc;
-                border: 1px solid #555555;
-                border-radius: 4px;
-                padding: 7px 16px;
-            }
-            #btnCancel:hover {
-                background-color: #3d3d3d;
-            }
-        """)
+    def _apply_theme(self):
+        if self._is_dark():
+            self.lbl_cpu_info.setStyleSheet("color: #a0a0a0; font-size: 11px;")
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #1e1e1e;
+                    color: #e0e0e0;
+                }
+                QGroupBox {
+                    border: 1px solid #3c3c3c;
+                    border-radius: 6px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    font-weight: bold;
+                    color: #e0e0e0;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    padding: 0 6px;
+                    color: #4a90d9;
+                }
+                QLabel {
+                    color: #e0e0e0;
+                }
+                QSpinBox {
+                    background-color: #2d2d2d;
+                    color: #ffffff;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    min-width: 90px;
+                }
+                QSpinBox:focus {
+                    border-color: #4a90d9;
+                }
+                QSlider::groove:horizontal {
+                    border: 1px solid #3c3c3c;
+                    height: 6px;
+                    background: #2d2d2d;
+                    border-radius: 3px;
+                }
+                QSlider::sub-page:horizontal {
+                    background: #4a90d9;
+                    border-radius: 3px;
+                }
+                QSlider::handle:horizontal {
+                    background: #e0e0e0;
+                    border: 1px solid #777;
+                    width: 14px;
+                    margin-top: -5px;
+                    margin-bottom: -5px;
+                    border-radius: 7px;
+                }
+                #btnSave {
+                    background-color: #1976d2;
+                    color: white;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 7px 18px;
+                }
+                #btnSave:hover {
+                    background-color: #1e88e5;
+                }
+                #btnCancel {
+                    background-color: #333333;
+                    color: #cccccc;
+                    border: 1px solid #555555;
+                    border-radius: 4px;
+                    padding: 7px 16px;
+                }
+                #btnCancel:hover {
+                    background-color: #3d3d3d;
+                }
+            """)
+        else:
+            self.lbl_cpu_info.setStyleSheet("color: #475569; font-size: 11px;")
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                }
+                QGroupBox {
+                    border: 1px solid #cbd5e1;
+                    border-radius: 6px;
+                    margin-top: 10px;
+                    padding-top: 10px;
+                    font-weight: bold;
+                    color: #0f172a;
+                    background-color: #f8fafc;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    padding: 0 6px;
+                    color: #2563eb;
+                }
+                QLabel {
+                    color: #0f172a;
+                }
+                QSpinBox {
+                    background-color: #ffffff;
+                    color: #0f172a;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    min-width: 90px;
+                }
+                QSpinBox:focus {
+                    border-color: #2563eb;
+                }
+                QSlider::groove:horizontal {
+                    border: 1px solid #cbd5e1;
+                    height: 6px;
+                    background: #e2e8f0;
+                    border-radius: 3px;
+                }
+                QSlider::sub-page:horizontal {
+                    background: #2563eb;
+                    border-radius: 3px;
+                }
+                QSlider::handle:horizontal {
+                    background: #ffffff;
+                    border: 2px solid #2563eb;
+                    width: 14px;
+                    margin-top: -5px;
+                    margin-bottom: -5px;
+                    border-radius: 7px;
+                }
+                #btnSave {
+                    background-color: #2563eb;
+                    color: white;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 7px 18px;
+                }
+                #btnSave:hover {
+                    background-color: #1d4ed8;
+                }
+                #btnCancel {
+                    background-color: #f1f5f9;
+                    color: #334155;
+                    border: 1px solid #cbd5e1;
+                    border-radius: 4px;
+                    padding: 7px 16px;
+                }
+                #btnCancel:hover {
+                    background-color: #e2e8f0;
+                }
+            """)
 
     def _update_cpu_hint(self, threads: int):
         pct = (threads / self.max_system_cpus) * 100.0

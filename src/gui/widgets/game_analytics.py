@@ -123,10 +123,10 @@ class EvaluationChart(QWidget):
         ph = actual_ph
         
         bg_color = QColor("#262421") if self.is_dark else QColor("#ffffff")
-        grid_color = QColor("#3a3835") if self.is_dark else QColor("#e0e0e0")
-        text_color = QColor("#8b8987") if self.is_dark else QColor("#666666")
-        line_color = QColor("#BB86FC") if self.is_dark else QColor("#312e2b")
-        cursor_color = QColor("#03DAC6") if self.is_dark else QColor("#2670e8")
+        grid_color = QColor("#3a3835") if self.is_dark else QColor("#e2e8f0")
+        text_color = QColor("#8b8987") if self.is_dark else QColor("#64748b")
+        line_color = QColor("#BB86FC") if self.is_dark else QColor("#2563eb")
+        cursor_color = QColor("#03DAC6") if self.is_dark else QColor("#2563eb")
         
         painter.fillRect(self.rect(), bg_color)
         
@@ -383,14 +383,14 @@ class ClockChart(QWidget):
         ph = actual_ph
         
         bg_color = QColor("#262421") if self.is_dark else QColor("#ffffff")
-        grid_color = QColor("#3a3835") if self.is_dark else QColor("#e0e0e0")
-        text_color = QColor("#8b8987") if self.is_dark else QColor("#666666")
+        grid_color = QColor("#3a3835") if self.is_dark else QColor("#e2e8f0")
+        text_color = QColor("#8b8987") if self.is_dark else QColor("#64748b")
         
-        white_bar_color = QColor("#e0e0e0") if self.is_dark else QColor("#424242")
-        black_bar_color = QColor("#BB86FC") if self.is_dark else QColor("#2670e8")
+        white_bar_color = QColor("#e0e0e0") if self.is_dark else QColor("#64748b")
+        black_bar_color = QColor("#BB86FC") if self.is_dark else QColor("#2563eb")
         
-        highlight_color = QColor("#03DAC6") if self.is_dark else QColor("#d32f2f")
-        hover_color = QColor("#00E676") if self.is_dark else QColor("#388E3C")
+        highlight_color = QColor("#03DAC6") if self.is_dark else QColor("#2563eb")
+        hover_color = QColor("#00E676") if self.is_dark else QColor("#3b82f6")
         
         painter.fillRect(self.rect(), bg_color)
         
@@ -521,8 +521,8 @@ class GameAnalytics(QWidget):
             background: {"#262421" if is_dark else "#ffffff"};
         }}
         QTabBar::tab {{
-            background: {"#1e1e1e" if is_dark else "#f0f0f0"};
-            color: {"#8b8987" if is_dark else "#555555"};
+            background: {"#1e1e1e" if is_dark else "#f1f5f9"};
+            color: {"#8b8987" if is_dark else "#64748b"};
             padding: 6px 12px;
             font-weight: bold;
             font-size: 11px;
@@ -530,8 +530,8 @@ class GameAnalytics(QWidget):
         }}
         QTabBar::tab:selected {{
             background: {"#262421" if is_dark else "#ffffff"};
-            color: {"#ffffff" if is_dark else "#000000"};
-            border-bottom: 2px solid {"#BB86FC" if is_dark else "#2670e8"};
+            color: {"#ffffff" if is_dark else "#0f172a"};
+            border-bottom: 2px solid {"#BB86FC" if is_dark else "#2563eb"};
         }}
         """
         self.tabs.setStyleSheet(style)
