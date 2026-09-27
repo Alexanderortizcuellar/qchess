@@ -503,6 +503,9 @@ class QPainterPGNBrowser(QWidget):
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.on_custom_context)
         
+        if hasattr(self.move_manager, "activeNodeChanged"):
+            self.move_manager.activeNodeChanged.connect(self.update_active_index)
+        
     def setHtml(self, html: str):
         self.rebuild_layout()
         

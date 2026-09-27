@@ -163,6 +163,7 @@ class MoveManager(QObject):
         for var in self.current_node.variations:
             if var.move == move:
                 self.current_node = var
+                self.activeNodeChanged.emit()
                 return
 
         # Compute SAN while board is active at current position
@@ -186,7 +187,7 @@ class MoveManager(QObject):
     def undo(self):
         if self.current_node.parent:
             self.current_node = self.current_node.parent
-            self.create_mapping()
+            self.activeNodeChanged.emit()
 
     def get_current_node_variations(self):
         """Return a list of variations from the current node."""
@@ -246,20 +247,21 @@ class MoveManager(QObject):
         """Go forward into a variation. Default is main line (index 0)."""
         if self.current_node.variations:
             self.current_node = self.current_node.variations[variation_index]
-            self.create_mapping()
+            self.activeNodeChanged.emit()
 
     def jump_to(self, index: int):
-        self.current_node = self.nodes[index]
-        self.create_mapping()
+        if 0 <= index < len(self.nodes):
+            self.current_node = self.nodes[index]
+            self.activeNodeChanged.emit()
 
     def jump_to_start(self):
         self.current_node = self.game
-        self.create_mapping()
+        self.activeNodeChanged.emit()
 
     def jump_to_end(self):
         if self.nodes:
             self.current_node = self.nodes[-1]
-            self.create_mapping()
+            self.activeNodeChanged.emit()
 
     def goto_ply(self, target_ply: int):
         """Jump active move cursor to a specific half-move number (ply) along the mainline."""
@@ -272,7 +274,7 @@ class MoveManager(QObject):
             node = node.variations[0]
             current_ply += 1
         self.current_node = node
-        self.create_mapping()
+        self.activeNodeChanged.emit()
 
     def get_current_ply(self) -> int:
         """Return the current half-move (ply) depth of the active node."""

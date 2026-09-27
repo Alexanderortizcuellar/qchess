@@ -116,3 +116,56 @@ def test_diagram_cache_lru_eviction(qapp):
 
     browser.clear_diagram_cache()
     assert len(browser._diagram_cache) == 0
+
+
+def test_navigation_without_reflattening(qapp):
+    """Verify MoveManager navigation updates cursor and emits activeNodeChanged without re-flattening."""
+    from core.move_manager import MoveManager
+    from unittest.mock import patch
+
+    mm = MoveManager("1. e4 e5 2. Nf3 Nc6 3. Bb5")
+    assert len(mm.nodes) == 5
+
+    active_changed_count = 0
+    def on_active():
+        nonlocal active_changed_count
+        active_changed_count += 1
+
+    mm.activeNodeChanged.connect(on_active)
+
+    with patch.object(mm, "create_mapping") as mock_mapping:
+        # Jump to end (ply 5)
+        mm.jump_to_end()
+        assert mm.get_current_ply() == 5
+        assert active_changed_count == 1
+        mock_mapping.assert_not_called()
+
+        # Navigate backward (undo to ply 4)
+        mm.undo()
+        assert mm.get_current_ply() == 4
+        assert active_changed_count == 2
+        mock_mapping.assert_not_called()
+
+        # Jump to start (ply 0)
+        mm.jump_to_start()
+        assert mm.get_current_ply() == 0
+        assert active_changed_count == 3
+        mock_mapping.assert_not_called()
+
+        # Goto ply 2
+        mm.goto_ply(2)
+        assert mm.get_current_ply() == 2
+        assert active_changed_count == 4
+        mock_mapping.assert_not_called()
+
+        # Redo (to ply 3)
+        mm.redo(0)
+        assert mm.get_current_ply() == 3
+        assert active_changed_count == 5
+        mock_mapping.assert_not_called()
+
+        # Jump to index 0 (ply 1)
+        mm.jump_to(0)
+        assert mm.get_current_ply() == 1
+        assert active_changed_count == 6
+        mock_mapping.assert_not_called()
