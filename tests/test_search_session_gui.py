@@ -313,3 +313,61 @@ def test_home_window_preview_dock_visibility_persistence(qapp):
     assert is_vis is True
 
 
+def test_analysis_widget_checkmate_terminal_state(qapp):
+    """Verify AnalysisWidget stops loading and displays game over upon checkmate."""
+    import chess
+    from gui.widgets.analysis_widget import AnalysisWidget
+
+    widget = AnalysisWidget()
+    widget.check_analysis.setChecked(True)
+
+    # 1. Scholar's mate (Black is mated)
+    # White delivers mate -> White wins (1-0, +M0)
+    fen_mate = "r1bqkb1r/pppp1Qpp/2n5/4p3/2B1n3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"
+    board = chess.Board(fen_mate)
+    assert board.is_checkmate()
+
+    widget.show_terminal_state(board)
+    assert not widget.lines_view.is_loading
+    assert not widget.lines_view.spinner_timer.isActive()
+    assert "Checkmate" in widget.lines_view.placeholder_text
+    assert "1-0" in widget.lines_view.placeholder_text
+    assert widget.score_label.text() == "+M0"
+    assert widget.depth_label.text() == "Game Over"
+
+    # Verify reset_lines with mate FEN does not start loading spinner
+    widget.set_board_fen(fen_mate)
+    widget.reset_lines()
+    assert not widget.lines_view.is_loading
+    assert not widget.lines_view.spinner_timer.isActive()
+
+
+def test_painter_pgn_browser_variation_line_breaks(qapp):
+    """Verify PGN browser breaks lines for sub-variations while keeping <= 3 move simple variations inline."""
+    from core.move_manager import MoveManager
+    from gui.widgets.painter_pgn_browser import QPainterPGNBrowser
+
+    # Case 1: Short simple variation (<= 3 moves, no nested variations)
+    # 1. e4 (1. d4 Nf6 2. c4) 1... e5
+    pgn_short = "1. e4 (1. d4 Nf6 2. c4) 1... e5 *"
+    mm_short = MoveManager(pgn_short)
+    browser_short = QPainterPGNBrowser(None, mm_short)
+    browser_short.rebuild_layout()
+
+    # Sibling variation at level 0 creates var_block at level 1: [ 1. d4 Nf6 2. c4 ]
+    assert len(browser_short.blocks) >= 2
+
+    # Case 2: Deeply nested sub-variations:
+    # 1. e4 e5 (1... c5 2. Nf3 (2. Nc3 d6 3. f4 g6 4. Nf3) 2... d6) 2. Nf3
+    # Sub-variation 2. Nc3 has 4 moves and nested structure, so it must break into its own PaintBlock
+    pgn_nested = "1. e4 e5 (1... c5 2. Nf3 (2. Nc3 d6 3. f4 g6 4. Nf3) 2... d6) 2. Nf3 *"
+    mm_nested = MoveManager(pgn_nested)
+    browser_nested = QPainterPGNBrowser(None, mm_nested)
+    browser_nested.rebuild_layout()
+
+    # Verify that a block with level >= 2 exists for the sub-variation
+    has_subvar_block = any(b.level >= 2 for b in browser_nested.blocks)
+    assert has_subvar_block
+
+
+

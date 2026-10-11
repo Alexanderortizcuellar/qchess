@@ -588,6 +588,11 @@ class AnalysisWidget(QWidget):
                     valid_lines[k] = v
 
         if not valid_lines:
+            board = chess.Board(self.last_board_fen) if self.last_board_fen else None
+            if board and board.is_game_over(claim_draw=True):
+                self.show_terminal_state(board)
+                return
+
             if not self.check_analysis.isChecked():
                 self.lines_view.stop_loading()
                 self.lines_view.set_placeholder("Enable engine for analysis...")
@@ -704,9 +709,57 @@ class AnalysisWidget(QWidget):
             turn = board.turn if board else chess.WHITE
             self.set_score(self.format_score(multipv_1_info, raw=True, turn=turn))
 
+    def set_board_fen(self, fen: str):
+        """Set the active board FEN."""
+        self.last_board_fen = fen
+
+    def show_terminal_state(self, board_or_fen, reason: str = ""):
+        """Display terminal state (checkmate, stalemate, draw) instead of loading indicator."""
+        if isinstance(board_or_fen, str):
+            board = chess.Board(board_or_fen)
+        else:
+            board = board_or_fen
+
+        self.analysis_lines.clear()
+        if board:
+            self.last_board_fen = board.fen()
+
+        if board and board.is_checkmate():
+            # Turn is the side that has no legal moves and is in check (the mated player)
+            if board.turn == chess.WHITE:
+                result_str = "0-1"
+                winner_text = "Black wins by checkmate"
+                score_display = "-M0"
+            else:
+                result_str = "1-0"
+                winner_text = "White wins by checkmate"
+                score_display = "+M0"
+            self.lines_view.set_placeholder(f"Checkmate • {result_str} ({winner_text})")
+            self.score_label.setText(score_display)
+            self.depth_label.setText("Game Over")
+        elif board and (board.is_stalemate() or (reason and "Stalemate" in reason)):
+            self.lines_view.set_placeholder("Stalemate • ½-½ (Draw)")
+            self.score_label.setText("½-½")
+            self.depth_label.setText("Game Over")
+        elif board and board.is_game_over(claim_draw=True):
+            r = reason or "Draw"
+            self.lines_view.set_placeholder(f"{r} • ½-½ (Draw)")
+            self.score_label.setText("½-½")
+            self.depth_label.setText("Game Over")
+        else:
+            txt = reason if reason else "Game Over"
+            self.lines_view.set_placeholder(txt)
+            self.score_label.setText("-")
+            self.depth_label.setText("Game Over")
+
     def reset_lines(self):
         """Clear the current analysis lines data."""
         self.analysis_lines.clear()
+        board = chess.Board(self.last_board_fen) if self.last_board_fen else None
+        if board and board.is_game_over(claim_draw=True):
+            self.show_terminal_state(board)
+            return
+
         if self.check_analysis.isChecked():
             self.lines_view.start_loading("Analyzing position...")
             self.score_label.setText("...")

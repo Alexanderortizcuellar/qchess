@@ -1715,35 +1715,36 @@ class ChessApp(QMainWindow):
             if is_fast_navigation:
                 self.engine.stop_search()
             self.clear_pending_analysis()
-            self.analysis_widget.reset_lines()
 
-            # Handle game over status indicator in status bar and eval bar
+            # Handle game over status indicator in status bar, eval bar, and analysis widget
             board = self.chessboard._internal_board
+            self.analysis_widget.set_board_fen(current_fen)
             reason = self.get_game_over_reason(board)
-            if reason:
-                self.statusBar().showMessage(f"Position status: {reason}")
+            is_terminal = board.is_checkmate() or board.is_stalemate() or (bool(reason) and board.is_game_over(claim_draw=True))
+
+            if is_terminal:
+                self.engine.stop_search()
+                self.engine_debounce_timer.stop()
+                self.clear_pending_analysis()
+                self.analysis_widget.show_terminal_state(board, reason=reason)
                 if board.is_checkmate():
                     winner_symbol = "white" if board.turn == chess.BLACK else "black"
                     self.bar.setEngineScore({"type": "checkmate", "winner": winner_symbol})
                     self.bar.setToolTip("Checkmate")
+                    self.statusBar().showMessage("Position status: Checkmate")
                 else:
                     self.bar.setEngineScore({"type": "draw"})
                     self.bar.setToolTip("Draw")
-            else:
-                self.statusBar().clearMessage()
+                    self.statusBar().showMessage(f"Position status: {reason}")
+                return
+
+            self.statusBar().clearMessage()
+            self.analysis_widget.reset_lines()
 
             # Clear the widget immediately ONLY if navigating fast.
             # If moving slowly, we keep the old lines visible until the first update of the new position arrives.
             if is_fast_navigation:
                 self.analysis_widget.reset_lines()
-
-            # For terminal states (checkmate, stalemate), no further analysis is needed 
-            # since there are no legal moves. We stop the engine and return immediately.
-            if board.is_checkmate() or board.is_stalemate():
-                self.engine_debounce_timer.stop()
-                if not is_fast_navigation:
-                    self.analysis_widget.reset_lines()
-                return
 
             if force or not is_fast_navigation:
                 # If forced or slow, run immediately (no debounce delay)

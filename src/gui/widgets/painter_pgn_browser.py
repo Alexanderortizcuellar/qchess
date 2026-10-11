@@ -116,7 +116,7 @@ class QPainterBrowser(QWidget):
         
         for block in self.blocks:
             x = margin_left
-            indent = 20 if block.level > 0 else 0
+            indent = min(60, block.level * 16) if block.level > 0 else 0
             x += indent
             
             block_top = y
@@ -761,6 +761,26 @@ class QPainterPGNBrowser(QWidget):
             else:
                 curr = None
 
+    def _analyze_variation(self, node):
+        """
+        Analyze variation tree starting at node.
+        Returns:
+            move_count (int): total moves along the variation mainline
+            has_nested (bool): True if any node along this variation has branches (sub-variations)
+        """
+        curr = node
+        count = 0
+        has_nested = False
+        while curr is not None:
+            count += 1
+            if len(curr.variations) > 1:
+                has_nested = True
+            if curr.variations:
+                curr = curr.variations[0]
+            else:
+                curr = None
+        return count, has_nested
+
     def traverse_layout_b(self, node, level, blocks, flat_nodes, show_comments, show_variations, current_block=None):
         curr = node
         need_prefix = True
@@ -857,13 +877,33 @@ class QPainterPGNBrowser(QWidget):
                             blocks.append(var_block)
                             var_block.tokens.append(Token("text", "[", level=1))
                             self.traverse_layout_b(sibling, 1, blocks, flat_nodes, show_comments, show_variations, var_block)
-                            var_block.tokens.append(Token("text", "]", level=1))
+                            if blocks and blocks[-1].tokens:
+                                blocks[-1].tokens.append(Token("text", "]", level=1))
+                            current_block = None
                             need_prefix = True
                         else:
-                            current_block.tokens.append(Token("text", "(", level=level))
-                            self.traverse_layout_b(sibling, level + 1, blocks, flat_nodes, show_comments, show_variations, current_block)
-                            current_block.tokens.append(Token("text", ")", level=level))
-                            need_prefix = True
+                            var_length, has_nested = self._analyze_variation(sibling)
+                            many_siblings = (len(siblings) > 2)
+                            should_break = has_nested or (var_length > 3) or many_siblings
+
+                            if should_break:
+                                var_block = PaintBlock(level=level + 1)
+                                blocks.append(var_block)
+                                var_block.tokens.append(Token("text", "(", level=level + 1))
+                                self.traverse_layout_b(sibling, level + 1, blocks, flat_nodes, show_comments, show_variations, var_block)
+                                if blocks and blocks[-1].tokens:
+                                    blocks[-1].tokens.append(Token("text", ")", level=level + 1))
+                                current_block = None
+                                need_prefix = True
+                            else:
+                                if current_block is None:
+                                    current_block = PaintBlock(level=level)
+                                    blocks.append(current_block)
+                                current_block.tokens.append(Token("text", "(", level=level))
+                                self.traverse_layout_b(sibling, level + 1, blocks, flat_nodes, show_comments, show_variations, current_block)
+                                if current_block.tokens:
+                                    current_block.tokens.append(Token("text", ")", level=level))
+                                need_prefix = True
                             
             if curr.variations:
                 curr = curr.variations[0]
