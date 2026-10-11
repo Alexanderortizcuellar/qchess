@@ -49,9 +49,12 @@ class ScidClient(QObject):
     search_progress = pyqtSignal(dict)
     import_progress = pyqtSignal(dict)
     export_progress = pyqtSignal(dict)
+    booster_progress = pyqtSignal(dict)
     pos_index_progress = pyqtSignal(dict)
     tree_index_progress = pyqtSignal(dict)
+    build_continuations_progress = pyqtSignal(dict)
     continuations_progress = pyqtSignal(dict)
+    opening_tree_progress = pyqtSignal(dict)
     endgame_index_progress = pyqtSignal(dict)
     process_error = pyqtSignal(str)
     process_stopped = pyqtSignal()
@@ -159,12 +162,18 @@ class ScidClient(QObject):
                     self.import_progress.emit(data.get("data", {}))
                 elif event_name == "export_progress":
                     self.export_progress.emit(data.get("data", {}))
+                elif event_name == "build_booster_progress":
+                    self.booster_progress.emit(data.get("data", {}))
                 elif event_name == "build_pos_index_progress":
                     self.pos_index_progress.emit(data.get("data", {}))
                 elif event_name == "build_tree_progress":
                     self.tree_index_progress.emit(data.get("data", {}))
                 elif event_name == "build_continuations_progress":
+                    self.build_continuations_progress.emit(data.get("data", {}))
+                elif event_name == "continuations_progress":
                     self.continuations_progress.emit(data.get("data", {}))
+                elif event_name == "opening_tree_progress":
+                    self.opening_tree_progress.emit(data.get("data", {}))
                 elif event_name == "build_endgames_progress":
                     self.endgame_index_progress.emit(data.get("data", {}))
                 else:
@@ -237,6 +246,7 @@ class ScidClient(QObject):
         sort_direction: Optional[str] = None,
         sort_asc: Optional[bool] = None,
         search_id: Optional[str] = None,
+        owner: Optional[str] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {
@@ -245,6 +255,8 @@ class ScidClient(QObject):
         }
         if search_id:
             params["search_id"] = search_id
+        if owner:
+            params["owner"] = owner
         if filter_dict:
             params.update(filter_dict)
             params["filter"] = filter_dict
@@ -258,6 +270,83 @@ class ScidClient(QObject):
             params["sort_asc"] = (sort_direction.upper() == "ASC")
 
         return self.send_request("query_games", params, callback)
+
+    def reference(
+        self,
+        fen: Optional[str] = None,
+        include_tree: bool = True,
+        include_continuations: bool = False,
+        include_endgames: bool = False,
+        include_games: bool = True,
+        page: int = 0,
+        page_size: int = 50,
+        sort_by: Optional[str] = None,
+        sort_asc: Optional[bool] = None,
+        filters: Optional[dict] = None,
+        max_sample_games: Optional[int] = None,
+        continuation_depth: Optional[int] = None,
+        max_lines: Optional[int] = None,
+        min_games: Optional[int] = None,
+        min_percentage: Optional[float] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        """Unified reference orchestrator: computes opening tree, continuations, endgames, and games session."""
+        params: Dict[str, Any] = {
+            "include_tree": include_tree,
+            "include_continuations": include_continuations,
+            "include_endgames": include_endgames,
+            "include_games": include_games,
+            "page": page,
+            "page_size": page_size,
+        }
+        if fen:
+            params["fen"] = fen
+        if filters:
+            params["filter"] = filters
+        if sort_by:
+            params["sort_by"] = sort_by
+        if sort_asc is not None:
+            params["sort_asc"] = sort_asc
+        if max_sample_games is not None:
+            params["max_sample_games"] = max_sample_games
+        if continuation_depth is not None:
+            params["continuation_depth"] = continuation_depth
+        if max_lines is not None:
+            params["max_lines"] = max_lines
+        if min_games is not None:
+            params["min_games"] = min_games
+        if min_percentage is not None:
+            params["min_percentage"] = min_percentage
+
+        return self.send_request("reference", params, callback)
+
+    def query_reference(
+        self,
+        fen: Optional[str] = None,
+        include_tree: bool = True,
+        include_continuations: bool = False,
+        include_endgames: bool = False,
+        include_games: bool = True,
+        page: int = 0,
+        page_size: int = 50,
+        sort_by: Optional[str] = None,
+        sort_asc: Optional[bool] = None,
+        filters: Optional[dict] = None,
+        callback: Optional[Callable[[dict], None]] = None,
+    ) -> int:
+        return self.reference(
+            fen=fen,
+            include_tree=include_tree,
+            include_continuations=include_continuations,
+            include_endgames=include_endgames,
+            include_games=include_games,
+            page=page,
+            page_size=page_size,
+            sort_by=sort_by,
+            sort_asc=sort_asc,
+            filters=filters,
+            callback=callback,
+        )
 
     def get_pgn(self, game_id: int, callback: Optional[Callable[[dict], None]] = None) -> int:
         return self.send_request("get_pgn", {"index": game_id}, callback)
@@ -319,6 +408,20 @@ class ScidClient(QObject):
             params["threads"] = threads
         return self.send_request("build_tree", params, callback)
 
+    def booster_status(self, callback: Optional[Callable[[dict], None]] = None) -> int:
+        """Check status of Search Booster index (.boost.idx)."""
+        return self.send_request("booster_status", {}, callback)
+
+    def check_booster_index(self, callback: Optional[Callable[[dict], None]] = None) -> int:
+        return self.booster_status(callback)
+
+    def build_booster(self, callback: Optional[Callable[[dict], None]] = None) -> int:
+        """Build high-speed 16-bit Search Booster companion index (.boost.idx)."""
+        return self.send_request("build_booster", {}, callback)
+
+    def build_booster_index(self, callback: Optional[Callable[[dict], None]] = None) -> int:
+        return self.build_booster(callback)
+
     def pos_index_status(self, callback: Optional[Callable[[dict], None]] = None) -> int:
         return self.send_request("pos_index_status", {}, callback)
 
@@ -361,6 +464,11 @@ class ScidClient(QObject):
         filters: Optional[dict] = None,
         max_sample_games: Optional[int] = None,
         include_sample_games: bool = True,
+        include_continuations: bool = False,
+        continuation_depth: Optional[int] = None,
+        max_lines: Optional[int] = None,
+        min_games: Optional[int] = None,
+        min_percentage: Optional[float] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {
@@ -372,6 +480,16 @@ class ScidClient(QObject):
             params["filter"] = filters
         if max_sample_games is not None:
             params["max_sample_games"] = max_sample_games
+        if include_continuations:
+            params["include_continuations"] = True
+            if continuation_depth is not None:
+                params["continuation_depth"] = continuation_depth
+            if max_lines is not None:
+                params["max_lines"] = max_lines
+            if min_games is not None:
+                params["min_games"] = min_games
+            if min_percentage is not None:
+                params["min_percentage"] = min_percentage
         return self.send_request("opening_tree", params, callback)
 
     def continuations(
@@ -381,6 +499,9 @@ class ScidClient(QObject):
         max_lines: int = 10,
         min_games: int = 1,
         min_percentage: float = 0.0,
+        filters: Optional[dict] = None,
+        use_search_results: bool = False,
+        game_ids: Optional[list] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {
@@ -391,6 +512,12 @@ class ScidClient(QObject):
         }
         if fen:
             params["fen"] = fen
+        if filters:
+            params["filter"] = filters
+        if use_search_results:
+            params["use_search_results"] = True
+        if game_ids:
+            params["game_ids"] = game_ids
         return self.send_request("continuations", params, callback)
 
     def build_continuations(
@@ -411,6 +538,9 @@ class ScidClient(QObject):
         category: Optional[str] = None,
         feature_id: Optional[str] = None,
         max_samples: int = 20,
+        filters: Optional[dict] = None,
+        use_search_results: bool = False,
+        game_ids: Optional[list] = None,
         callback: Optional[Callable[[dict], None]] = None,
     ) -> int:
         params: Dict[str, Any] = {
@@ -422,6 +552,12 @@ class ScidClient(QObject):
             params["category"] = category
         if feature_id:
             params["feature_id"] = feature_id
+        if filters:
+            params["filter"] = filters
+        if use_search_results:
+            params["use_search_results"] = True
+        if game_ids:
+            params["game_ids"] = game_ids
         return self.send_request("endgames", params, callback)
 
     def build_endgames(

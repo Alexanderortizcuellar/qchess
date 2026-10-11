@@ -23,6 +23,9 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QMenu,
     QTabWidget,
+    QSplitter,
+    QPushButton,
+    QCheckBox,
 )
 
 from gui.widgets.analysis_widget import AnalysisWidget
@@ -35,6 +38,7 @@ from gui.widgets.game_analytics import GameAnalytics
 from gui.widgets.analysis_summary_widget import AnalysisSummaryWidget
 from gui.widgets.continuations_widget import ContinuationsWidget
 from gui.widgets.endgames_widget import EndgamesWidget
+from gui.widgets.position_games_widget import PositionGamesWidget
 from gui.dialogs.variations_dlg import VariationsDialog
 from utils.helpers import _create_action, _create_iconed_button
 from gui.dialogs.board_editor import BoardEditorDlg
@@ -54,6 +58,7 @@ class ChessApp(QMainWindow):
     searchPositionRequested = pyqtSignal(str)
     previousGameRequested = pyqtSignal()
     nextGameRequested = pyqtSignal()
+    referenceRequested = pyqtSignal(str, bool)  # (fen, force)
     themeChanged = pyqtSignal(str)
     closed = pyqtSignal(object)
 
@@ -196,6 +201,14 @@ class ChessApp(QMainWindow):
         self.engine_debounce_timer.setInterval(150)  # 150ms debounce
         self.engine_debounce_timer.timeout.connect(self.run_debounced_send_position)
         
+        # Debounce timer for reference queries (Opening Tree, Continuations, Endgames, Matching Games)
+        self.reference_debounce_timer = QTimer(self)
+        self.reference_debounce_timer.setSingleShot(True)
+        self.reference_debounce_timer.setInterval(180)  # 180ms debounce for rapid arrow navigation
+        self.reference_debounce_timer.timeout.connect(self.run_debounced_send_reference)
+        self._last_ref_fen = None
+        self._pending_ref_fen = None
+
         # Delay timer for engine move hover preview to avoid rapid flashing
         self.engine_hover_preview_timer = QTimer(self)
         self.engine_hover_preview_timer.setSingleShot(True)
@@ -319,47 +332,116 @@ class ChessApp(QMainWindow):
         controls_layout.addWidget(self.options_menu_btn)
         pgn_dock_layout.addWidget(controls_widget)
 
-        self.pgn_dock = QDockWidget("PGN Browser", self)
-        self.pgn_dock.setWidget(pgn_container)
-        self.pgn_dock.setObjectName("pgn_dock")
-        self.pgn_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
-
         # Apply figurine font to PGN browser
         self.browser.setStyleSheet(
             f"QTextBrowser {{font-size:20px; font-family: '{self.current_figurine_font}';}}"
         )
 
-        # 3. Opening Explorer Dock
-        self.opxl = OpeningExplorerLogic(self)
-        self.explorer_dock = QDockWidget("Opening Explorer", self)
-        self.explorer_dock.setWidget(self.opxl)
-        self.explorer_dock.setObjectName("explorer_dock")
-        self.explorer_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.explorer_dock)
-        self.analysis_dock.setMinimumWidth(380)
-        self.pgn_dock.setMinimumWidth(380)
-        self.explorer_dock.setMinimumWidth(380)
-        self.explorer_dock.hide()
+        # Tabbed Sidebar Container (Tab 0: Notation, Tab 1: Reference)
+        self.sidebar_tab_widget = QTabWidget(self)
+        self.sidebar_tab_widget.setObjectName("sidebar_tab_widget")
+        self.sidebar_tab_widget.addTab(pgn_container, "📝 Notation")
 
-        # 4. Common Continuations & Reference Dock (Tabbed container)
+        # Reference tab container
+        ref_container = QWidget()
+        ref_layout = QVBoxLayout(ref_container)
+        ref_layout.setContentsMargins(0, 0, 0, 0)
+        ref_layout.setSpacing(2)
+
+        # Unified Reference Top Header Bar
+        self.ref_header_bar = QWidget(ref_container)
+        self.ref_header_bar.setObjectName("ReferenceHeaderBar")
+        self.ref_header_bar.setFixedHeight(24)
+        ref_h_layout = QHBoxLayout(self.ref_header_bar)
+        ref_h_layout.setContentsMargins(8, 2, 8, 2)
+        ref_h_layout.setSpacing(8)
+
+        self.ref_match_count_lbl = QLabel("No database loaded", self.ref_header_bar)
+        self.ref_match_count_lbl.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        self.ref_match_count_lbl.setStyleSheet("color: #3b82f6;")
+        ref_h_layout.addWidget(self.ref_match_count_lbl)
+        ref_h_layout.addStretch()
+
+        ref_layout.addWidget(self.ref_header_bar)
+
+        self.ref_splitter = QSplitter(Qt.Vertical, ref_container)
+        self.ref_splitter.setChildrenCollapsible(False)
+
+        # 1. Opening Explorer
+        self.opxl = OpeningExplorerLogic(self)
+        self.ref_splitter.addWidget(self.opxl)
+
+        # 2. Common Continuations & Endgames
         self.continuations_widget = ContinuationsWidget(self)
         self.endgames_widget = EndgamesWidget(self)
-
         self.ref_tab_widget = QTabWidget(self)
+        self.ref_tab_widget.setObjectName("ref_tab_widget")
         self.ref_tab_widget.addTab(self.continuations_widget, "📈 Continuations")
         self.ref_tab_widget.addTab(self.endgames_widget, "♟ Endgames")
+        self.ref_splitter.addWidget(self.ref_tab_widget)
 
-        self.continuations_dock = QDockWidget("Continuations", self)
-        self.continuations_dock.setWidget(self.ref_tab_widget)
-        self.continuations_dock.setObjectName("continuations_dock")
-        self.continuations_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.continuations_dock)
-        self.continuations_dock.setMinimumWidth(380)
-        self.tabifyDockWidget(self.explorer_dock, self.continuations_dock)
-        self.continuations_dock.hide()
+        # 3. Matching Games
+        self.position_games_widget = PositionGamesWidget(self)
+        self.ref_splitter.addWidget(self.position_games_widget)
 
-        # 5. Game Analytics Dock
+        self.ref_splitter.setSizes([220, 200, 200])
+        ref_layout.addWidget(self.ref_splitter)
+
+        # Unified Reference Bottom Footer Bar (Auto, Query, Filters)
+        self.ref_footer_bar = QWidget(ref_container)
+        self.ref_footer_bar.setObjectName("ReferenceFooterBar")
+        self.ref_footer_bar.setFixedHeight(30)
+        ref_f_layout = QHBoxLayout(self.ref_footer_bar)
+        ref_f_layout.setContentsMargins(6, 2, 6, 2)
+        ref_f_layout.setSpacing(8)
+
+        self.ref_auto_chk = QCheckBox("Auto", self.ref_footer_bar)
+        self.ref_auto_chk.setChecked(True)
+        self.ref_auto_chk.setToolTip("Automatically update reference statistics when moving on the board")
+
+        self.ref_query_btn = QPushButton("▶ Query", self.ref_footer_bar)
+        self.ref_query_btn.setCursor(Qt.PointingHandCursor)
+        self.ref_query_btn.setToolTip("Refresh reference statistics for the current position")
+        self.ref_query_btn.clicked.connect(self._on_ref_query_clicked)
+
+        from core.reference_filters import get_reference_filter_manager
+        self.ref_filter_mgr = get_reference_filter_manager()
+        self.ref_filters_btn = QPushButton("🔍 Filters", self.ref_footer_bar)
+        self.ref_filters_btn.setCursor(Qt.PointingHandCursor)
+        self.ref_filters_btn.clicked.connect(self._open_reference_filters_dialog)
+        self.ref_filter_mgr.filtersChanged.connect(self._update_ref_filter_btn_state)
+        self._update_ref_filter_btn_state()
+
+        ref_f_layout.addWidget(self.ref_auto_chk)
+        ref_f_layout.addWidget(self.ref_query_btn)
+        ref_f_layout.addWidget(self.ref_filters_btn)
+        ref_f_layout.addStretch()
+
+        ref_layout.addWidget(self.ref_footer_bar)
+
+        self.sidebar_tab_widget.addTab(ref_container, "📚 Reference")
+
+        # 3. Lichess Opening Explorer
+        from gui.widgets.lichess_explorer_widget import LichessExplorerWidget
+        self.lichess_widget = LichessExplorerWidget(self)
+        self.sidebar_tab_widget.addTab(self.lichess_widget, "🌐 Lichess")
+        self.lichess_widget.moveSelected.connect(self._on_explorer_move_selected)
+        self.lichess_widget.gameSelected.connect(self._on_lichess_game_selected)
+        self.lichess_widget.statusMessage.connect(self.statusBar().showMessage)
+
+        self.sidebar_tab_widget.setCurrentIndex(0)  # Notation tab active by default for fast performance
+        self.sidebar_tab_widget.currentChanged.connect(self._on_sidebar_tab_changed)
+
+        # PGN & Reference Dock
+        self.pgn_dock = QDockWidget("PGN & Reference", self)
+        self.pgn_dock.setWidget(self.sidebar_tab_widget)
+        self.pgn_dock.setObjectName("pgn_dock")
+        self.pgn_dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.pgn_dock)
+        self.analysis_dock.setMinimumWidth(380)
+        self.pgn_dock.setMinimumWidth(380)
+
+        # 4. Game Analytics Dock
         self.analytics_widget = GameAnalytics(self)
         self.analytics_dock = QDockWidget("Game Analytics", self)
         self.analytics_dock.setWidget(self.analytics_widget)
@@ -369,7 +451,7 @@ class ChessApp(QMainWindow):
         self.analytics_dock.hide()
         self.analytics_widget.moveIndexRequested.connect(self.move_manager.jump_to)
 
-        # 6. Game Review (Analysis Summary) Dock
+        # 5. Game Review (Analysis Summary) Dock
         self.summary_widget = AnalysisSummaryWidget(self)
         self.summary_dock = QDockWidget("Game Review", self)
         self.summary_dock.setWidget(self.summary_widget)
@@ -380,7 +462,6 @@ class ChessApp(QMainWindow):
         self.summary_dock.hide()
 
         self.splitDockWidget(self.analysis_dock, self.pgn_dock, Qt.Vertical)
-        self.splitDockWidget(self.pgn_dock, self.explorer_dock, Qt.Vertical)
 
         # Restore saved dock window state if available, else apply defaults
         from PyQt5.QtCore import QSettings
@@ -432,18 +513,13 @@ class ChessApp(QMainWindow):
         self.move_manager.activeNodeChanged.connect(self.sync_board_to_pgn)
         self.browser.anchorClicked.connect(self.on_anchor_clicked)
         self.chessboard.fenChanged.connect(self.send_position)
-        self.chessboard.fenChanged.connect(self.send_fen_to_opxl)
-        self.chessboard.fenChanged.connect(self.send_fen_to_continuations)
-        self.chessboard.fenChanged.connect(self.send_fen_to_endgames)
+        self.chessboard.fenChanged.connect(self.send_reference)
         self.ref_tab_widget.currentChanged.connect(self._on_ref_tab_changed)
         self.opxl.moveSelected.connect(self._on_explorer_move_selected)
         self.opxl.errorOcurred.connect(self.statusBar().showMessage)
-        self.explorer_dock.visibilityChanged.connect(
-            lambda visible: QTimer.singleShot(0, lambda: self.send_fen_to_opxl(self.chessboard.fen())) if visible else None
-        )
         self.continuations_widget.continuationSelected.connect(self.on_continuation_selected)
-        self.continuations_dock.visibilityChanged.connect(
-            lambda visible: QTimer.singleShot(0, lambda: self.send_fen_to_continuations(self.chessboard.fen())) if visible else None
+        self.pgn_dock.visibilityChanged.connect(
+            lambda visible: QTimer.singleShot(0, lambda: self.send_reference(self.chessboard.fen(), force=True)) if (visible and self.sidebar_tab_widget.currentIndex() == 1) else None
         )
 
         self.engine.analysisUpdated.connect(self.on_analysis_updated)
@@ -621,6 +697,10 @@ class ChessApp(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         game_menu = self.menuBar().addMenu("&Game")
         board_menu = self.menuBar().addMenu("&Board")
+        self.new_game_action = _create_action(
+            self, "New Game", self.new_game, "Ctrl+N", icon_name="fa5s.plus"
+        )
+        self.new_game_action.setToolTip("Start a new game / analysis [Ctrl+N]")
         open_action = _create_action(
             self, "Open", self.open_pgn, "Ctrl+O", icon_name="fa5s.folder-open"
         )
@@ -683,6 +763,9 @@ class ChessApp(QMainWindow):
         copy_fen_action = _create_action(
             self, "Copy FEN", self.copy_current_fen, "Ctrl+Shift+F", icon_name="fa5s.copy"
         )
+        self.reference_filters_action = _create_action(
+            self, "Reference Database Filters...", self.open_reference_filters, "Ctrl+Alt+R", icon_name="fa5s.filter"
+        )
 
         engine_menu = self.menuBar().addMenu("&Engine")
         engine_action = _create_action(
@@ -725,10 +808,46 @@ class ChessApp(QMainWindow):
         docks_menu = view_menu.addMenu("&Docks")
         docks_menu.addAction(self.pgn_dock.toggleViewAction())
         docks_menu.addAction(self.analysis_dock.toggleViewAction())
-        docks_menu.addAction(self.explorer_dock.toggleViewAction())
-        docks_menu.addAction(self.continuations_dock.toggleViewAction())
         docks_menu.addAction(self.analytics_dock.toggleViewAction())
         docks_menu.addAction(self.summary_dock.toggleViewAction())
+
+        ref_panels_menu = view_menu.addMenu("📚 &Reference Panels")
+
+        def _toggle_explorer(checked: bool):
+            if checked:
+                self.sidebar_tab_widget.setCurrentIndex(1)
+            self.opxl.setVisible(checked)
+            if checked:
+                self.send_reference(self.chessboard.fen(), force=True)
+
+        def _toggle_continuations(checked: bool):
+            if checked:
+                self.sidebar_tab_widget.setCurrentIndex(1)
+            self.ref_tab_widget.setVisible(checked)
+            if checked:
+                self.send_reference(self.chessboard.fen(), force=True)
+
+        def _toggle_games(checked: bool):
+            if checked:
+                self.sidebar_tab_widget.setCurrentIndex(1)
+            self.position_games_widget.setVisible(checked)
+            if checked:
+                self.send_reference(self.chessboard.fen(), force=True)
+
+        self.toggle_explorer_act = ref_panels_menu.addAction("Opening Explorer")
+        self.toggle_explorer_act.setCheckable(True)
+        self.toggle_explorer_act.setChecked(True)
+        self.toggle_explorer_act.toggled.connect(_toggle_explorer)
+
+        self.toggle_continuations_act = ref_panels_menu.addAction("Continuations & Endgames")
+        self.toggle_continuations_act.setCheckable(True)
+        self.toggle_continuations_act.setChecked(True)
+        self.toggle_continuations_act.toggled.connect(_toggle_continuations)
+
+        self.toggle_games_act = ref_panels_menu.addAction("Matching Games")
+        self.toggle_games_act.setCheckable(True)
+        self.toggle_games_act.setChecked(True)
+        self.toggle_games_act.toggled.connect(_toggle_games)
 
         self.analytics_dock.visibilityChanged.connect(
             lambda visible: self.analytics_widget.update_data(self.move_manager.game, self.move_manager.current_node)
@@ -739,6 +858,7 @@ class ChessApp(QMainWindow):
             if visible else None
         )
 
+        file_menu.addAction(self.new_game_action)
         file_menu.addAction(open_action)
         file_menu.addAction(save_action)
         file_menu.addAction(save_as_action)
@@ -766,6 +886,8 @@ class ChessApp(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
 
+        game_menu.addAction(self.new_game_action)
+        game_menu.addSeparator()
         game_menu.addAction(self.prev_game_action)
         game_menu.addAction(self.next_game_action)
         game_menu.addSeparator()
@@ -781,6 +903,7 @@ class ChessApp(QMainWindow):
         board_menu.addAction(flip_action)
         board_menu.addAction(setup_board_action)
         board_menu.addAction(search_position_action)
+        board_menu.addAction(self.reference_filters_action)
         board_menu.addSeparator()
         board_menu.addAction(export_img_action)
         board_menu.addAction(copy_board_img_action)
@@ -801,6 +924,7 @@ class ChessApp(QMainWindow):
 
         self.init_toolbar(
             [
+                self.new_game_action,
                 open_action,
                 save_action,
                 self.prev_game_action,
@@ -852,68 +976,32 @@ class ChessApp(QMainWindow):
                 )
                 if dialog.exec_() != QDialog.Accepted or dialog.selected_index is None:
                     return
-                self.move_manager.redo(dialog.selected_index)
+                if not self.move_manager.redo(dialog.selected_index):
+                    return
             else:
-                self.move_manager.redo(0)
-
-            shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-            self.chessboard.update_board(
-                self.move_manager.get_board().fen(),
-                self.move_manager.current_node.move,
-                shapes=shapes,
-                custom_highlights=highlights,
-            )
-            self.display_pgn()
+                if not self.move_manager.redo(0):
+                    return
         elif self.autoplay_timer.isActive():
             self.autoplay_timer.stop()
             self.autoplay_action.setChecked(False)
             self.statusBar().showMessage("Autoplay Finished")
 
     def backward(self):
-        self.move_manager.undo()
-        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-        self.chessboard.update_board(
-            self.move_manager.get_board().fen(),
-            self.move_manager.current_node.move,
-            shapes=shapes,
-            custom_highlights=highlights,
-        )
-        self.display_pgn()
+        if not self.move_manager.undo():
+            return
 
     def jump_to_start(self):
-        self.move_manager.jump_to_start()
-        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-        self.chessboard.update_board(
-            self.move_manager.get_board().fen(),
-            shapes=shapes,
-            custom_highlights=highlights,
-        )
-        self.display_pgn()
+        if not self.move_manager.jump_to_start():
+            return
 
     def jump_to_end(self):
-        self.move_manager.jump_to_end()
-        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-        self.chessboard.update_board(
-            self.move_manager.get_board().fen(),
-            self.move_manager.current_node.move,
-            shapes=shapes,
-            custom_highlights=highlights,
-        )
-        self.display_pgn()
+        if not self.move_manager.jump_to_end():
+            return
 
     def goto_ply(self, target_ply: int):
         """Jump chessboard and move cursor directly to target_ply."""
-        self.move_manager.goto_ply(target_ply)
-        node = self.move_manager.current_node
-        last_move = node.move if hasattr(node, "move") and node.move else None
-        shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-        self.chessboard.update_board(
-            self.move_manager.get_board().fen(),
-            last_move,
-            shapes=shapes,
-            custom_highlights=highlights,
-        )
-        self.display_pgn()
+        if not self.move_manager.goto_ply(target_ply):
+            return
         if hasattr(self.browser, "update_active_index"):
             self.browser.update_active_index()
 
@@ -1015,6 +1103,11 @@ class ChessApp(QMainWindow):
             f"QTextBrowser {{font-size:20px; font-family: {self.current_figurine_font};}}"
         )
 
+        # Opening Explorer Format
+        explorer_mode = settings.value("explorer_view_mode", "table")
+        if hasattr(self, "opxl") and hasattr(self.opxl, "set_view_mode"):
+            self.opxl.set_view_mode(explorer_mode)
+
         # Application Mode Toggle
         app_mode = settings.value("app_mode", "Analysis Mode")
         if app_mode == "Game / Train Mode":
@@ -1062,8 +1155,11 @@ class ChessApp(QMainWindow):
             self.opxl.set_theme(True)
             self.continuations_widget.set_theme(True)
             self.endgames_widget.set_theme(True)
+            self.position_games_widget.set_theme(True)
             self.analytics_widget.set_theme(True)
             self.summary_widget.set_theme(True)
+            if hasattr(self, "lichess_widget"):
+                self.lichess_widget.set_theme(True)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, True)
@@ -1075,8 +1171,11 @@ class ChessApp(QMainWindow):
             self.opxl.set_theme(False)
             self.continuations_widget.set_theme(False)
             self.endgames_widget.set_theme(False)
+            self.position_games_widget.set_theme(False)
             self.analytics_widget.set_theme(False)
             self.summary_widget.set_theme(False)
+            if hasattr(self, "lichess_widget"):
+                self.lichess_widget.set_theme(False)
             from utils.helpers import update_widget_icons
 
             update_widget_icons(self, False)
@@ -1099,10 +1198,30 @@ class ChessApp(QMainWindow):
         self.chessboard.flip()
         self.bar.setFlipped(not self.bar._flipped)
 
-    def clear_pgn(self):
+    def new_game(self):
+        """Start a new game: discard current game/database tracking, clear board & notation, and reset title."""
+        if hasattr(self, "autoplay_timer") and self.autoplay_timer.isActive():
+            self.autoplay_timer.stop()
+            if hasattr(self, "autoplay_action"):
+                self.autoplay_action.setChecked(False)
+
         self.move_manager.clear()
+        self.current_pgn_path = None
+        self.current_pgn_offset = None
+        self.current_pgn_length = None
+        self._current_table_row = None
+        self._current_game_id = None
+        self._active_repertoire_node_id = None
+        if hasattr(self, "set_matching_plies"):
+            self.set_matching_plies([])
+
+        self.setWindowTitle("Chess App - New Game")
         self.display_pgn()
         self.chessboard.update_board(self.move_manager.get_board().fen())
+        self.statusBar().showMessage("New game started.", 3000)
+
+    def clear_pgn(self):
+        self.new_game()
 
     def load_fen(self):
         fen, ok = QInputDialog.getText(self, "Load FEN", "Enter FEN:")
@@ -1117,6 +1236,11 @@ class ChessApp(QMainWindow):
                 self.move_manager.load_fen(new_fen)
                 self.display_pgn()
                 self.chessboard.update_board(new_fen)
+
+    def open_reference_filters(self):
+        from gui.dialogs.reference_filters_dialog import ReferenceFiltersDialog
+        dlg = ReferenceFiltersDialog(self, is_dark=self.is_dark)
+        dlg.exec_()
 
     def setup_board(self):
         dlg = BoardEditorDlg(self, initial_fen=self.chessboard.fen())
@@ -1150,13 +1274,6 @@ class ChessApp(QMainWindow):
         match = re.match(r"move\((\d+)\)", url.toString())
         if match:
             self.move_manager.jump_to(int(match.group(1)))
-            shapes, highlights = self.move_manager.get_current_shapes_and_highlights()
-            self.chessboard.update_board(
-                self.move_manager.current_node.board().fen(),
-                self.move_manager.current_node.move,
-                shapes=shapes,
-                custom_highlights=highlights,
-            )
 
     def handle_move(self, move_uci):
         self.move_manager.make_move(move_uci)
@@ -1335,68 +1452,217 @@ class ChessApp(QMainWindow):
         except Exception as e:
             print(f"[ChessApp] Error executing explorer move '{move_str}': {e}")
 
-    def is_explorer_active(self) -> bool:
-        """Return True only if the Opening Explorer dock and widget are visible and active on screen."""
-        if not hasattr(self, "explorer_dock") or not hasattr(self, "opxl"):
+    def _on_sidebar_tab_changed(self, index: int):
+        if index == 1:
+            self.send_reference(self.chessboard.fen(), force=True)
+        elif hasattr(self, "lichess_widget") and self.sidebar_tab_widget.widget(index) == self.lichess_widget:
+            self.send_lichess(self.chessboard.fen(), force=True)
+
+    def is_lichess_tab_active(self) -> bool:
+        """Return True only if the Lichess tab is selected and its dock is visible on screen."""
+        if not hasattr(self, "pgn_dock") or not hasattr(self, "sidebar_tab_widget"):
             return False
-        if not self.explorer_dock.isVisible() or self.explorer_dock.isMinimized():
+        if not self.pgn_dock.isVisible() or self.pgn_dock.isMinimized():
             return False
-        # If tabbed behind another dock widget, its visibleRegion is empty
-        if self.explorer_dock.visibleRegion().isEmpty():
+        if not hasattr(self, "lichess_widget"):
+            return False
+        if self.sidebar_tab_widget.currentWidget() != self.lichess_widget:
+            return False
+        if self.pgn_dock.visibleRegion().isEmpty():
             return False
         return True
 
-    def send_fen_to_opxl(self, fen: str, force: bool = False):
+    def send_lichess(self, fen: str = None, force: bool = False):
+        if not hasattr(self, "lichess_widget"):
+            return
+        if not force and not self.is_lichess_tab_active():
+            return
+        current_fen = fen or self.chessboard.fen()
+        self.lichess_widget.query_fen(current_fen, force=force)
+
+    def _on_lichess_game_selected(self, pgn_text: str, summary: dict):
+        if not pgn_text:
+            return
+        self.move_manager.update_pgn(pgn_text)
+        self.display_pgn()
+        self.chessboard.update_board(self.move_manager.get_board().fen())
+        if summary:
+            w_obj = summary.get("white")
+            b_obj = summary.get("black")
+            w = w_obj.get("name") if isinstance(w_obj, dict) else str(w_obj or "")
+            b = b_obj.get("name") if isinstance(b_obj, dict) else str(b_obj or "")
+            if w and b:
+                self.setWindowTitle(f"Chess App - Lichess: {w} vs {b}")
+                self.statusBar().showMessage(f"Loaded game from Lichess: {w} vs {b}", 5000)
+
+    def is_reference_tab_active(self) -> bool:
+        """Return True only if the Reference tab is selected and its dock is visible on screen."""
+        if not hasattr(self, "pgn_dock") or not hasattr(self, "sidebar_tab_widget"):
+            return False
+        if not self.pgn_dock.isVisible() or self.pgn_dock.isMinimized():
+            return False
+        if self.sidebar_tab_widget.currentIndex() != 1:
+            return False
+        if self.pgn_dock.visibleRegion().isEmpty():
+            return False
+        return True
+
+    def is_explorer_active(self) -> bool:
+        """Return True only if the Reference tab is active and Opening Explorer is visible."""
+        if not self.is_reference_tab_active():
+            return False
+        if not hasattr(self, "opxl") or not self.opxl.isVisible():
+            return False
+        return True
+
+    def send_reference(self, fen: str = None, force: bool = False):
         if getattr(self, "suppress_explorer_update", False):
             return
-        if self.is_explorer_active():
-            self.opxl.send_fen(fen, force=force)
+        if not force and hasattr(self, "ref_auto_chk") and not self.ref_auto_chk.isChecked():
+            return
+        current_fen = fen or self.chessboard.fen()
+        if not force and hasattr(self, "_last_ref_fen") and self._last_ref_fen == current_fen:
+            return
+
+        if self.is_lichess_tab_active():
+            self.send_lichess(current_fen, force=force)
+
+        has_active = (
+            self.is_explorer_active()
+            or self.is_continuations_active()
+            or self.is_endgames_active()
+            or self.is_games_active()
+        )
+        if not has_active and not force:
+            return
+
+        self._pending_ref_fen = current_fen
+
+        if force:
+            self.reference_debounce_timer.stop()
+            self.run_debounced_send_reference(force=True)
+        else:
+            self.reference_debounce_timer.start()
+
+    def run_debounced_send_reference(self, force: bool = False):
+        current_fen = getattr(self, "_pending_ref_fen", None) or self.chessboard.fen()
+        self._last_ref_fen = current_fen
+        self.referenceRequested.emit(current_fen, force)
+
+    def send_fen_to_opxl(self, fen: str, force: bool = False):
+        self.send_reference(fen, force=force)
 
     def is_continuations_active(self) -> bool:
-        """Return True only if the Continuations dock and widget are visible and active on screen."""
-        if not hasattr(self, "continuations_dock") or not hasattr(self, "continuations_widget"):
+        """Return True only if the Reference tab is active and Continuations tab is selected."""
+        if not self.is_reference_tab_active():
             return False
-        if not self.continuations_dock.isVisible() or self.continuations_dock.isMinimized():
+        if not hasattr(self, "ref_tab_widget") or not hasattr(self, "continuations_widget"):
             return False
-        if hasattr(self, "ref_tab_widget") and self.ref_tab_widget.currentWidget() != self.continuations_widget:
-            return False
-        if self.continuations_dock.visibleRegion().isEmpty():
+        if not self.ref_tab_widget.isVisible() or self.ref_tab_widget.currentWidget() != self.continuations_widget:
             return False
         return True
 
     def send_fen_to_continuations(self, fen: str, force: bool = False):
-        if getattr(self, "suppress_explorer_update", False):
-            return
-        if self.is_continuations_active() or force:
-            self.continuations_widget.set_position(fen)
+        self.send_reference(fen, force=force)
 
     def is_endgames_active(self) -> bool:
-        """Return True only if the Continuations dock and Endgames tab are visible and active on screen."""
-        if not hasattr(self, "continuations_dock") or not hasattr(self, "endgames_widget"):
+        """Return True only if the Reference tab is active and Endgames tab is selected."""
+        if not self.is_reference_tab_active():
             return False
-        if not self.continuations_dock.isVisible() or self.continuations_dock.isMinimized():
+        if not hasattr(self, "ref_tab_widget") or not hasattr(self, "endgames_widget"):
             return False
-        if hasattr(self, "ref_tab_widget") and self.ref_tab_widget.currentWidget() != self.endgames_widget:
-            return False
-        if self.continuations_dock.visibleRegion().isEmpty():
+        if not self.ref_tab_widget.isVisible() or self.ref_tab_widget.currentWidget() != self.endgames_widget:
             return False
         return True
 
     def send_fen_to_endgames(self, fen: str, force: bool = False):
-        if getattr(self, "suppress_explorer_update", False):
-            return
-        if self.is_endgames_active() or force:
-            self.endgames_widget.send_fen(fen, force=force)
+        self.send_reference(fen, force=force)
+
+    def is_games_active(self) -> bool:
+        """Return True only if the Reference tab is active and Matching Games is visible."""
+        if not self.is_reference_tab_active():
+            return False
+        if not hasattr(self, "position_games_widget") or not self.position_games_widget.isVisible():
+            return False
+        return True
+
+    def send_fen_to_games(self, fen: str, force: bool = False):
+        self.send_reference(fen, force=force)
+
+    def _on_ref_query_clicked(self):
+        self._loaded_tree_fen = None
+        self._loaded_cont_fen = None
+        self._loaded_endg_fen = None
+        self._loaded_games_fen = None
+        self.send_reference(self.chessboard.fen(), force=True)
 
     def _on_ref_tab_changed(self, index: int):
         if not hasattr(self, "ref_tab_widget"):
             return
-        current = self.ref_tab_widget.widget(index)
-        fen = self.chessboard.fen()
-        if hasattr(self, "endgames_widget") and current == self.endgames_widget:
-            self.send_fen_to_endgames(fen, force=True)
-        elif hasattr(self, "continuations_widget") and current == self.continuations_widget:
-            self.send_fen_to_continuations(fen, force=True)
+        if self.is_reference_tab_active():
+            self.send_reference(self.chessboard.fen(), force=True)
+
+    def _open_reference_filters_dialog(self):
+        from gui.dialogs.reference_filters_dialog import ReferenceFiltersDialog
+        dlg = ReferenceFiltersDialog(self, is_dark=self.is_dark)
+        dlg.exec_()
+
+    def _update_ref_filter_btn_state(self, _=None):
+        if not hasattr(self, "ref_filters_btn") or not hasattr(self, "ref_filter_mgr"):
+            return
+        has_active = self.ref_filter_mgr.has_active_filter()
+        if has_active:
+            self.ref_filters_btn.setText("🔍 Filters (Active)")
+            self.ref_filters_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1e3a5f;
+                    color: #60a5fa;
+                    border: 1px solid #3b82f6;
+                    border-radius: 4px;
+                    padding: 2px 10px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2563eb;
+                    color: #ffffff;
+                }
+            """)
+            self.ref_filters_btn.setToolTip(f"Active Reference Filters: {self.ref_filter_mgr.get_summary_text()}")
+        else:
+            self.ref_filters_btn.setText("🔍 Filters")
+            btn_bg = "#312e2b" if self.is_dark else "#ffffff"
+            btn_color = "#e2e8f0" if self.is_dark else "#0f172a"
+            btn_border = "#403d39" if self.is_dark else "#cbd5e1"
+            btn_hover = "#3f3c38" if self.is_dark else "#f1f5f9"
+            self.ref_filters_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {btn_bg};
+                    color: {btn_color};
+                    border: 1px solid {btn_border};
+                    border-radius: 4px;
+                    padding: 2px 10px;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: {btn_hover};
+                }}
+            """)
+            self.ref_filters_btn.setToolTip("Configure Reference Filters (applied across Tree, Continuations, Endgames & Games)")
+
+    def update_reference_header(self, total_games: int = 0, is_loading: bool = False, message: str = ""):
+        if not hasattr(self, "ref_match_count_lbl"):
+            return
+        if is_loading:
+            self.ref_match_count_lbl.setText("⏳ Querying reference statistics...")
+            return
+        if message:
+            self.ref_match_count_lbl.setText(message)
+            return
+        if total_games == 0:
+            self.ref_match_count_lbl.setText("0 matching games")
+        else:
+            self.ref_match_count_lbl.setText(f"📊 {total_games:,} matching games")
 
     def on_continuation_selected(self, moves: list):
         """Play a sequence of moves (e.g. from common continuations) on the board."""
@@ -1687,7 +1953,7 @@ class ChessApp(QMainWindow):
     def _ensure_dock_proportions(self):
         """Ensure right dock widgets have adequate width (approx 50/50 split with board)."""
         target_w = max(460, int(self.width() * 0.46))
-        docks_to_resize = [d for d in [self.analysis_dock, self.pgn_dock, self.explorer_dock, self.continuations_dock] if d.isVisible()]
+        docks_to_resize = [d for d in [self.analysis_dock, self.pgn_dock] if hasattr(self, "pgn_dock") and d.isVisible()]
         if docks_to_resize:
             if any(d.width() < 380 for d in docks_to_resize) or not hasattr(self, '_dock_proportions_set'):
                 self._dock_proportions_set = True

@@ -1,6 +1,6 @@
 import sys
 import chess
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QSettings
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect, QRectF, QSettings, QTimer
 from PyQt5.QtGui import QFont, QPainter, QColor, QFontMetrics, QBrush, QPen
 from PyQt5.QtWidgets import (
     QApplication,
@@ -45,7 +45,8 @@ class EngineLineData:
 class QPainterEngineView(QWidget):
     """
     Lightweight, custom-painted engine analysis lines view with multi-line move wrapping.
-    Provides precise per-move hit testing, hover highlights, and board preview signal hooks.
+    Provides precise per-move hit testing, hover highlights, board preview hooks,
+    and a smooth, non-freezing animated loading indicator.
     """
     moveHovered = pyqtSignal(object, object)  # (fen: str | None, uci: str | None)
     moveClicked = pyqtSignal(str, str)        # (uci: str, fen: str)
@@ -63,7 +64,43 @@ class QPainterEngineView(QWidget):
         self.calculated_height = 80
         self.setMinimumHeight(80)
 
+        # Loading animation
+        self.is_loading = False
+        self.spinner_angle = 0
+        self.spinner_timer = QTimer(self)
+        self.spinner_timer.setInterval(33)  # ~30 FPS smooth rotation
+        self.spinner_timer.timeout.connect(self._on_spinner_tick)
+
+    def _on_spinner_tick(self):
+        if not self.is_loading:
+            self.spinner_timer.stop()
+            return
+        self.spinner_angle = (self.spinner_angle + 12) % 360
+        self.update()
+
+    def start_loading(self, text: str = "Starting engine analysis..."):
+        self.placeholder_text = text
+        self.is_loading = True
+        self.lines = []
+        if self.hovered_token is not None or self._preview_active:
+            self.hovered_token = None
+            self._preview_active = False
+            self.moveHovered.emit(None, None)
+        self.calculated_height = 80
+        self.setMinimumHeight(80)
+        self.updateGeometry()
+        if not self.spinner_timer.isActive():
+            self.spinner_timer.start()
+        self.update()
+
+    def stop_loading(self):
+        self.is_loading = False
+        if self.spinner_timer.isActive():
+            self.spinner_timer.stop()
+        self.update()
+
     def set_placeholder(self, text: str):
+        self.stop_loading()
         self.placeholder_text = text
         self.lines = []
         if self.hovered_token is not None or self._preview_active:
@@ -80,6 +117,8 @@ class QPainterEngineView(QWidget):
         self.update()
 
     def set_lines(self, lines: list):
+        if lines:
+            self.stop_loading()
         self.lines = lines
         self.compute_layout()
         self.update()
@@ -232,9 +271,40 @@ class QPainterEngineView(QWidget):
 
         if not self.lines:
             painter.setFont(font_regular)
-            color_text = QColor("#8b8987") if self.is_dark else QColor("#94a3b8")
-            painter.setPen(color_text)
-            painter.drawText(self.rect(), Qt.AlignCenter, self.placeholder_text)
+            if self.is_loading:
+                # Render animated spinner and status message
+                cx = self.width() / 2.0
+                cy = self.height() / 2.0 - 10.0
+
+                radius = 11.0
+                spinner_rect = QRectF(cx - radius, cy - radius, radius * 2.0, radius * 2.0)
+
+                # Faint track ring
+                track_color = QColor(255, 255, 255, 30) if self.is_dark else QColor(0, 0, 0, 25)
+                track_pen = QPen(track_color, 2.5)
+                track_pen.setCapStyle(Qt.RoundCap)
+                painter.setPen(track_pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(spinner_rect)
+
+                # Animated arc
+                accent_color = QColor("#4DB6AC") if self.is_dark else QColor("#2563eb")
+                arc_pen = QPen(accent_color, 2.5)
+                arc_pen.setCapStyle(Qt.RoundCap)
+                painter.setPen(arc_pen)
+                start_angle = int(-self.spinner_angle * 16)
+                span_angle = int(100 * 16)
+                painter.drawArc(spinner_rect, start_angle, span_angle)
+
+                # Text below spinner
+                color_text = QColor("#d4d4d4") if self.is_dark else QColor("#334155")
+                painter.setPen(color_text)
+                text_rect = QRectF(0, cy + radius + 6, float(self.width()), 20.0)
+                painter.drawText(text_rect, Qt.AlignCenter, self.placeholder_text)
+            else:
+                color_text = QColor("#8b8987") if self.is_dark else QColor("#94a3b8")
+                painter.setPen(color_text)
+                painter.drawText(self.rect(), Qt.AlignCenter, self.placeholder_text)
             return
 
         # Palette definition
@@ -502,9 +572,9 @@ class AnalysisWidget(QWidget):
         self.evaluationToggled.emit(checked)
 
     def show_starting_status(self):
-        """Show 'Starting engine analysis...' status while waiting for the engine."""
+        """Show 'Starting engine analysis...' status with non-freezing animated spinner."""
         self.analysis_lines.clear()
-        self.lines_view.set_placeholder("Starting engine analysis...")
+        self.lines_view.start_loading(f"Starting {self.engine_name}...")
         self.score_label.setText("...")
         self.depth_label.setText("starting...")
 
@@ -519,9 +589,10 @@ class AnalysisWidget(QWidget):
 
         if not valid_lines:
             if not self.check_analysis.isChecked():
+                self.lines_view.stop_loading()
                 self.lines_view.set_placeholder("Enable engine for analysis...")
             else:
-                self.lines_view.set_placeholder("Analyzing position...")
+                self.lines_view.start_loading("Analyzing position...")
             self.lines_view.set_lines([])
             return
 
@@ -637,10 +708,11 @@ class AnalysisWidget(QWidget):
         """Clear the current analysis lines data."""
         self.analysis_lines.clear()
         if self.check_analysis.isChecked():
-            self.lines_view.set_placeholder("Starting engine analysis...")
+            self.lines_view.start_loading("Analyzing position...")
             self.score_label.setText("...")
             self.depth_label.setText("")
         else:
+            self.lines_view.stop_loading()
             self.lines_view.set_placeholder("Enable engine for analysis...")
             self.score_label.setText("")
             self.depth_label.setText("")

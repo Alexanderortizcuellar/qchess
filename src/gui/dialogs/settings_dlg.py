@@ -45,6 +45,10 @@ class SettingsDialog(QDialog):
         # --- Opening Explorer Settings ---
         explorer_group = QGroupBox("Opening Explorer")
         explorer_form = QFormLayout(explorer_group)
+
+        self.explorer_format_combo = QComboBox()
+        self.explorer_format_combo.addItems(["Table", "Bars"])
+        explorer_form.addRow("View Format:", self.explorer_format_combo)
         
         self.pgn_path_edit = QLineEdit()
         self.pgn_path_edit.setPlaceholderText("Select PGN file...")
@@ -54,10 +58,34 @@ class SettingsDialog(QDialog):
         self.browse_btn = QPushButton("Browse...")
         self.browse_btn.clicked.connect(self.browse_pgn_file)
         browse_layout.addWidget(self.browse_btn)
-        
-        explorer_form.addRow("Explorer PGN:", browse_layout)
+        explorer_form.addRow("PGN File:", browse_layout)
+
         layout.addWidget(explorer_group)
         
+        # --- Reference Filters Settings ---
+        from core.reference_filters import get_reference_filter_manager
+        from gui.dialogs.reference_filters_dialog import ReferenceFiltersDialog
+
+        self.ref_filter_mgr = get_reference_filter_manager()
+        ref_group = QGroupBox("Reference Database Filters (Tree, Continuations, Endgames)")
+        ref_layout = QVBoxLayout(ref_group)
+        
+        self.ref_filter_summary_lbl = QLineEdit()
+        self.ref_filter_summary_lbl.setReadOnly(True)
+        self.ref_filter_summary_lbl.setText(self.ref_filter_mgr.get_summary_text())
+        self.ref_filter_summary_lbl.setStyleSheet("font-size: 11px; background-color: rgba(0,0,0,0.05);")
+        ref_layout.addWidget(self.ref_filter_summary_lbl)
+
+        btn_row = QHBoxLayout()
+        self.btn_config_ref_filters = QPushButton("🔍 Configure Reference Filters...")
+        self.btn_config_ref_filters.clicked.connect(self._open_reference_filters)
+        self.btn_clear_ref_filters = QPushButton("Clear Filters")
+        self.btn_clear_ref_filters.clicked.connect(self._clear_reference_filters)
+        btn_row.addWidget(self.btn_config_ref_filters)
+        btn_row.addWidget(self.btn_clear_ref_filters)
+        ref_layout.addLayout(btn_row)
+        layout.addWidget(ref_group)
+
         # --- PGN Browser Settings ---
         browser_group = QGroupBox("PGN Browser Settings")
         browser_form = QFormLayout(browser_group)
@@ -81,6 +109,15 @@ class SettingsDialog(QDialog):
         self.mode_combo.addItems(["Analysis Mode", "Game / Train Mode"])
         mode_form.addRow("Mode:", self.mode_combo)
         layout.addWidget(mode_group)
+
+        # --- Lichess API Settings ---
+        lichess_group = QGroupBox("Lichess Opening Explorer")
+        lichess_form = QFormLayout(lichess_group)
+        self.lichess_token_edit = QLineEdit()
+        self.lichess_token_edit.setEchoMode(QLineEdit.Password)
+        self.lichess_token_edit.setPlaceholderText("lip_... (automatically read from .env if present)")
+        lichess_form.addRow("API Personal Token:", self.lichess_token_edit)
+        layout.addWidget(lichess_group)
         
         # --- Buttons ---
         buttons = QHBoxLayout()
@@ -93,6 +130,21 @@ class SettingsDialog(QDialog):
         buttons.addWidget(save_btn)
         buttons.addWidget(cancel_btn)
         layout.addLayout(buttons)
+
+    def _is_dark(self) -> bool:
+        if self.parent() is not None and hasattr(self.parent(), "is_dark"):
+            return bool(self.parent().is_dark)
+        return QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
+
+    def _open_reference_filters(self):
+        from gui.dialogs.reference_filters_dialog import ReferenceFiltersDialog
+        dlg = ReferenceFiltersDialog(self, is_dark=self._is_dark())
+        if dlg.exec_() == QDialog.Accepted:
+            self.ref_filter_summary_lbl.setText(self.ref_filter_mgr.get_summary_text())
+
+    def _clear_reference_filters(self):
+        self.ref_filter_mgr.clear_filters()
+        self.ref_filter_summary_lbl.setText(self.ref_filter_mgr.get_summary_text())
 
     def browse_pgn_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -113,6 +165,9 @@ class SettingsDialog(QDialog):
         
         use_figurine = self.settings.value("use_figurine_font", True, type=bool)
         self.figurine_font_cb.setChecked(use_figurine)
+
+        fmt_mode = str(self.settings.value("explorer_view_mode", "table")).capitalize()
+        self.explorer_format_combo.setCurrentText("Bars" if fmt_mode == "Bars" else "Table")
 
         show_nags = self.settings.value("show_nags", True, type=bool)
         self.show_nags_cb.setChecked(show_nags)
@@ -138,11 +193,15 @@ class SettingsDialog(QDialog):
         mode = self.settings.value("app_mode", "Analysis Mode")
         self.mode_combo.setCurrentText(mode)
 
+        from core.lichess_client import load_lichess_token
+        self.lichess_token_edit.setText(load_lichess_token())
+
     def save_settings(self):
         self.settings.setValue("board_theme", self.theme_combo.currentText())
         self.settings.setValue("premoves_enabled", self.premoves_cb.isChecked())
         self.settings.setValue("animation_duration", self.anim_duration.value())
         self.settings.setValue("use_figurine_font", self.figurine_font_cb.isChecked())
+        self.settings.setValue("explorer_view_mode", self.explorer_format_combo.currentText().lower())
         self.settings.setValue("show_nags", self.show_nags_cb.isChecked())
         self.settings.setValue("show_eval_annotations", self.show_eval_cb.isChecked())
         self.settings.setValue("show_move_classifications", self.show_classifications_cb.isChecked())
@@ -150,6 +209,10 @@ class SettingsDialog(QDialog):
         self.settings.setValue("layout_mode", self.layout_mode_combo.currentIndex())
         self.settings.setValue("explorer_pgn_path", self.pgn_path_edit.text())
         self.settings.setValue("app_mode", self.mode_combo.currentText())
+
+        from core.lichess_client import save_lichess_token
+        save_lichess_token(self.lichess_token_edit.text().strip())
+
         self.accept()
 
     def get_settings(self):
@@ -158,6 +221,7 @@ class SettingsDialog(QDialog):
             "premoves_enabled": self.premoves_cb.isChecked(),
             "animation_duration": self.anim_duration.value(),
             "use_figurine_font": self.figurine_font_cb.isChecked(),
+            "explorer_view_mode": self.explorer_format_combo.currentText().lower(),
             "show_nags": self.show_nags_cb.isChecked(),
             "show_eval_annotations": self.show_eval_cb.isChecked(),
             "show_move_classifications": self.show_classifications_cb.isChecked(),

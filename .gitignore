@@ -4,3 +4,5 @@ __pycache__
 instructions/
 target/
 .ruff_cache
+.env
+*.env

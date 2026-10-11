@@ -1,6 +1,6 @@
 import chess
 from PyQt5 import QtCore, QtWidgets
-from gchessboard.src.board import BoardView
+from gchessboard.src.painter_board import PainterChessBoard as BoardView
 from gchessboard.src.promotion import PromotionDialog
 
 class ChessBoard(QtWidgets.QWidget):
@@ -31,7 +31,7 @@ class ChessBoard(QtWidgets.QWidget):
         self.eval_bar.hide()
         self.inner_layout.addWidget(self.eval_bar)
         
-        self.board_view = BoardView(self)
+        self.board_view = BoardView(parent=self)
         self.board_view.setStyleSheet("border: none; background: transparent;")
         self.inner_layout.addWidget(self.board_view, stretch=1)
         
@@ -271,14 +271,15 @@ class ChessBoard(QtWidgets.QWidget):
         shapes: list = None,
         custom_highlights: dict = None,
     ):
+        prev_fen = self._internal_board.fen()
         self._internal_board.set_fen(fen)
         self._update_view(
             last_move=last_move,
             shapes=shapes,
             custom_highlights=custom_highlights,
         )
-        # Match old board behavior: emit fenChanged
-        self.fenChanged.emit(fen)
+        if fen != prev_fen:
+            self.fenChanged.emit(fen)
 
     def restart_board(self):
         self._internal_board.reset()

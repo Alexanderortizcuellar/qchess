@@ -1,7 +1,7 @@
 import os
 import qtawesome as qta
 
-from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QSettings, QSize, QTimer, QEvent
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
     QDockWidget,
@@ -21,6 +21,7 @@ from PyQt5.QtWidgets import (
     QMenu,
     QMessageBox,
     QDialog,
+    QFrame,
     QApplication,
 )
 
@@ -165,7 +166,8 @@ class HomeWindow(QMainWindow):
             QDockWidget.DockWidgetFloatable |
             QDockWidget.DockWidgetClosable
         )
-        dock.setMinimumWidth(260)
+        dock.setMinimumWidth(320)
+        dock.installEventFilter(self)
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         self._preview_dock = dock
         self._preview_dock.visibilityChanged.connect(self._on_preview_dock_visibility_changed)
@@ -173,9 +175,36 @@ class HomeWindow(QMainWindow):
         # Hidden by default on welcome screen
         self._preview_dock.hide()
 
+    def eventFilter(self, watched, event):
+        if hasattr(self, "_preview_dock") and watched is self._preview_dock:
+            if event.type() == QEvent.Resize:
+                if self._preview_dock.isVisible() and self.stack.currentIndex() == 1 and not getattr(self, "_is_closing", False):
+                    w = self._preview_dock.width()
+                    if w >= 320:
+                        settings = QSettings("QChessApp", "WindowState")
+                        settings.setValue("preview_dock_width", w)
+        return super().eventFilter(watched, event)
+
+    def _restore_preview_dock_visibility(self):
+        """Restore preview dock visibility and saved width after opening or creating a database."""
+        if not hasattr(self, "_preview_dock"):
+            return
+        settings = QSettings("QChessApp", "WindowState")
+        val = settings.value("preview_dock_visible", True)
+        dock_visible = (val.lower() == "true") if isinstance(val, str) else bool(val)
+        saved_width = int(settings.value("preview_dock_width", 440))
+        saved_width = max(320, saved_width)
+
+        self._preview_dock.setVisible(dock_visible)
+        if dock_visible:
+            self.resizeDocks([self._preview_dock], [saved_width], Qt.Horizontal)
+            QTimer.singleShot(0, lambda: self.resizeDocks([self._preview_dock], [saved_width], Qt.Horizontal) if hasattr(self, "_preview_dock") else None)
+            self._load_selected_row_preview()
+
     def _on_preview_dock_visibility_changed(self, visible: bool):
+        if getattr(self, "_is_closing", False) or getattr(self, "_switching_pages", False):
+            return
         if self.stack.currentIndex() == 1:
-            from PyQt5.QtCore import QSettings
             settings = QSettings("QChessApp", "WindowState")
             settings.setValue("preview_dock_visible", visible)
         if visible:
@@ -262,6 +291,7 @@ class HomeWindow(QMainWindow):
         self._pending_preview_req_id = self.scid_client.get_pgn(int(game_id), callback=on_pgn)
 
     def closeEvent(self, event):
+        self._is_closing = True
         from PyQt5.QtCore import QSettings
         settings = QSettings("QChessApp", "WindowState")
         if hasattr(self, "_repertoire_dock"):
@@ -270,6 +300,8 @@ class HomeWindow(QMainWindow):
         if hasattr(self, "_preview_dock") and self.stack.currentIndex() == 1:
             is_open = not self._preview_dock.isHidden()
             settings.setValue("preview_dock_visible", is_open)
+            if is_open and self._preview_dock.width() >= 320:
+                settings.setValue("preview_dock_width", self._preview_dock.width())
         super().closeEvent(event)
 
     # ──────────────────────── Welcome Page ────────────────────────
@@ -369,6 +401,12 @@ class HomeWindow(QMainWindow):
         header_row.addWidget(self.db_info_label)
         header_row.addStretch()
 
+        self.btn_booster_badge = QPushButton("⚡ Booster Active")
+        self.btn_booster_badge.setCursor(Qt.PointingHandCursor)
+        self.btn_booster_badge.clicked.connect(self.build_position_index)
+        self.btn_booster_badge.hide()
+        header_row.addWidget(self.btn_booster_badge)
+
         self.btn_clear_search = QPushButton("✕ Clear Search Filter")
         self.btn_clear_search.setStyleSheet(
             "background-color: #c62828; color: white; font-weight: bold; border-radius: 4px; padding: 4px 12px;"
@@ -379,6 +417,10 @@ class HomeWindow(QMainWindow):
         header_row.addWidget(self.btn_clear_search)
 
         layout.addLayout(header_row)
+
+        # Warning / Notification Banner for missing Search Booster
+        self.booster_warning_banner = self._build_booster_banner()
+        layout.addWidget(self.booster_warning_banner)
 
         # Game list table (virtual scrolling backed by scid_client)
         self.game_table = GameListTableWidget(self.scid_client, self)
@@ -392,6 +434,194 @@ class HomeWindow(QMainWindow):
         layout.addWidget(self.game_table, 1)
 
         return page
+
+    def _build_booster_banner(self) -> QFrame:
+        banner = QFrame()
+        banner.setObjectName("boosterWarningBanner")
+        b_layout = QHBoxLayout(banner)
+        b_layout.setContentsMargins(12, 6, 12, 6)
+        b_layout.setSpacing(10)
+
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(qta.icon("fa5s.bolt", color="#f59e0b").pixmap(18, 18))
+        b_layout.addWidget(icon_lbl)
+
+        self.booster_banner_text = QLabel(
+            "<b>No Search Booster:</b> Fast companion index (.boost.idx) is missing. "
+            "Build it now for instant opening tree and sub-second position searches."
+        )
+        self.booster_banner_text.setFont(QFont("Segoe UI", 9))
+        self.booster_banner_text.setWordWrap(True)
+        b_layout.addWidget(self.booster_banner_text, 1)
+
+        btn_build = QPushButton(qta.icon("fa5s.bolt", color="white"), "  Build Booster Now")
+        btn_build.setCursor(Qt.PointingHandCursor)
+        btn_build.setStyleSheet("""
+            QPushButton {
+                background-color: #d97706;
+                color: white;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #b45309;
+            }
+        """)
+        btn_build.clicked.connect(self.build_position_index)
+        b_layout.addWidget(btn_build)
+
+        btn_dismiss = QPushButton("✕")
+        btn_dismiss.setCursor(Qt.PointingHandCursor)
+        btn_dismiss.setToolTip("Dismiss this notice")
+        btn_dismiss.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #888;
+                font-size: 12px;
+                border: none;
+                padding: 2px 6px;
+            }
+            QPushButton:hover {
+                color: #e0e0e0;
+            }
+        """)
+        btn_dismiss.clicked.connect(lambda: self.booster_warning_banner.hide())
+        b_layout.addWidget(btn_dismiss)
+
+        banner.setStyleSheet("""
+            #boosterWarningBanner {
+                background-color: rgba(217, 119, 6, 0.15);
+                border: 1px solid #d97706;
+                border-radius: 6px;
+            }
+        """)
+        banner.hide()
+        return banner
+
+    def update_booster_badge(self, status: str, plies: int = 0):
+        status_lower = str(status).lower() if status else "missing"
+        if status_lower == "valid":
+            plies_str = f" ({plies:,} plies)" if plies > 0 else ""
+            self.btn_booster_badge.setText(f"⚡ Booster Active{plies_str}")
+            self.btn_booster_badge.setToolTip(
+                "Search Booster (.boost.idx) is valid and accelerating searches.\nClick to rebuild or manage."
+            )
+            if self.is_dark:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #14532d;
+                        color: #4ade80;
+                        font-weight: bold;
+                        border: 1px solid #16a34a;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #166534;
+                    }
+                """)
+            else:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #dcfce7;
+                        color: #15803d;
+                        font-weight: bold;
+                        border: 1px solid #86efac;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #bbf7d0;
+                    }
+                """)
+            self.btn_booster_badge.show()
+            self.booster_warning_banner.hide()
+        elif status_lower == "outdated":
+            self.btn_booster_badge.setText("⚠️ Booster Outdated (Click to Rebuild)")
+            self.btn_booster_badge.setToolTip(
+                "Search Booster (.boost.idx) is outdated compared to database game count.\nClick to rebuild."
+            )
+            self.booster_banner_text.setText(
+                "<b>Booster Outdated:</b> Search Booster (.boost.idx) is out of sync with new games. "
+                "Rebuild it now to ensure full search accuracy."
+            )
+            if self.is_dark:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #78350f;
+                        color: #fbbf24;
+                        font-weight: bold;
+                        border: 1px solid #d97706;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #92400e;
+                    }
+                """)
+            else:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fef3c7;
+                        color: #b45309;
+                        font-weight: bold;
+                        border: 1px solid #fde68a;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #fde68a;
+                    }
+                """)
+            self.btn_booster_badge.show()
+            self.booster_warning_banner.show()
+        else:
+            self.btn_booster_badge.setText("⚠️ No Search Booster (Click to Build)")
+            self.btn_booster_badge.setToolTip(
+                "Search Booster (.boost.idx) is missing for this database.\nClick to build now for instant opening tree and sub-second searches."
+            )
+            self.booster_banner_text.setText(
+                "<b>No Search Booster:</b> Fast companion index (.boost.idx) is missing. "
+                "Build it now for instant opening tree and sub-second position searches."
+            )
+            if self.is_dark:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #78350f;
+                        color: #fbbf24;
+                        font-weight: bold;
+                        border: 1px solid #d97706;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #92400e;
+                    }
+                """)
+            else:
+                self.btn_booster_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #fef3c7;
+                        color: #b45309;
+                        font-weight: bold;
+                        border: 1px solid #fde68a;
+                        border-radius: 12px;
+                        padding: 3px 12px;
+                        font-size: 11px;
+                    }
+                    QPushButton:hover {
+                        background-color: #fde68a;
+                    }
+                """)
+            self.btn_booster_badge.show()
+            self.booster_warning_banner.show()
 
     # ──────────────────────── Toolbar & Menu ────────────────────────
 
@@ -569,7 +799,7 @@ class HomeWindow(QMainWindow):
 
         search_menu.addSeparator()
 
-        build_idx_act = search_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.pos.idx & .tree.idx)...")
+        build_idx_act = search_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.boost.idx & .feat.idx)...")
         build_idx_act.setShortcut("Ctrl+Shift+B")
         build_idx_act.triggered.connect(self.build_position_index)
 
@@ -581,7 +811,7 @@ class HomeWindow(QMainWindow):
 
         # Tools Menu
         tools_menu = menubar.addMenu("&Tools")
-        t_build_act = tools_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.pos.idx & .tree.idx)...")
+        t_build_act = tools_menu.addAction(qta.icon("fa5s.bolt", color="#f59e0b"), "Build Fast Database Indexes (.boost.idx & .feat.idx)...")
         t_build_act.setShortcut("Ctrl+Shift+B")
         t_build_act.triggered.connect(self.build_position_index)
 
@@ -776,6 +1006,7 @@ class HomeWindow(QMainWindow):
                 self.db_info_label.setText(f"📁 [{fmt.upper()}] {basename}")
                 self.setWindowTitle(f"QChess — {basename}")
                 self.stack.setCurrentIndex(1)
+                self._restore_preview_dock_visibility()
                 self.status_bar.showMessage(f"Created new database: {basename}", 6000)
                 self._add_to_recent(full_path)
                 self.databaseOpened.emit(full_path, full_path)
@@ -1042,17 +1273,19 @@ class HomeWindow(QMainWindow):
             if resp.get("status") == "ok":
                 stats = resp.get("data", {}).get("stats", {})
                 self._current_db_stats = stats
-                total_games = stats.get("total_games", 0)
+                total_games = stats.get("total_games", stats.get("game_count", 0))
                 fmt = resp.get("data", {}).get("format", "si5")
                 self.game_table.load_database(total_games, None)
                 self.db_info_label.setText(f"📁 [{fmt.upper()}] {basename}")
                 self.setWindowTitle(f"QChess — {basename}")
                 self.stack.setCurrentIndex(1)
-                settings = QSettings("QChessApp", "WindowState")
-                val = settings.value("preview_dock_visible", False)
-                dock_visible = (val.lower() == "true") if isinstance(val, str) else bool(val)
-                if hasattr(self, "_preview_dock"):
-                    self._preview_dock.setVisible(dock_visible)
+
+                # Check and display booster index badge and warning banner
+                b_status = resp.get("data", {}).get("booster_index_status") or stats.get("booster_index_status", "missing")
+                b_plies = resp.get("data", {}).get("booster_index_plies") or stats.get("booster_index_plies", 0)
+                self.update_booster_badge(b_status, b_plies)
+
+                self._restore_preview_dock_visibility()
                 self.status_bar.showMessage(f"Opened {basename} ({total_games:,} games).", 6000)
                 self._add_to_recent(db_path)
                 self.databaseOpened.emit(db_path, db_path)
@@ -1064,7 +1297,7 @@ class HomeWindow(QMainWindow):
         self.scid_client.open_database(db_path, callback=on_opened)
 
     def build_position_index(self):
-        """Open dialog to construct or rebuild fast companion database indexes (.pos.idx & .tree.idx)."""
+        """Open dialog to construct or rebuild fast companion database indexes (.boost.idx & .feat.idx)."""
         if not self._current_db_path:
             QMessageBox.information(
                 self,
@@ -1077,6 +1310,17 @@ class HomeWindow(QMainWindow):
         saved_depth = int(settings.value("default_pos_index_depth", 24))
         dlg = BuildPosIndexDialog(self.scid_client, default_ply=saved_depth, parent=self)
         dlg.exec_()
+
+        # Re-check booster index status to refresh badge & warning banner
+        def on_booster_checked(resp: dict):
+            if resp.get("status") == "ok":
+                data = resp.get("data", {})
+                st = data.get("status", "missing")
+                plies = data.get("total_plies", 0)
+                self.update_booster_badge(st, plies)
+
+        if self.scid_client.is_running():
+            self.scid_client.booster_status(callback=on_booster_checked)
 
     def open_database_settings(self):
         """Open Search & CPU Threading preferences dialog."""
@@ -1097,10 +1341,14 @@ class HomeWindow(QMainWindow):
 
     def _go_home(self):
         """Return to the welcome screen."""
-        self.stack.setCurrentIndex(0)
-        self.setWindowTitle("QChess — Home")
-        if hasattr(self, "_preview_dock"):
-            self._preview_dock.hide()
+        self._switching_pages = True
+        try:
+            self.stack.setCurrentIndex(0)
+            self.setWindowTitle("QChess — Home")
+            if hasattr(self, "_preview_dock"):
+                self._preview_dock.hide()
+        finally:
+            self._switching_pages = False
 
     # ──────────────────────── Recent Files ────────────────────────
 
@@ -1172,6 +1420,8 @@ class HomeWindow(QMainWindow):
             self.repertoire_tree.set_theme(is_dark)
         if hasattr(self, "game_preview"):
             self.game_preview.set_theme(is_dark)
+        if hasattr(self, "game_table"):
+            self.game_table.set_theme(is_dark)
         if hasattr(self, "recent_files_layout"):
             self._populate_recent_files()
 

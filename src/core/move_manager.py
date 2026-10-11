@@ -184,10 +184,12 @@ class MoveManager(QObject):
         self.create_mapping()
         self.is_dirty = True
 
-    def undo(self):
+    def undo(self) -> bool:
         if self.current_node.parent:
             self.current_node = self.current_node.parent
             self.activeNodeChanged.emit()
+            return True
+        return False
 
     def get_current_node_variations(self):
         """Return a list of variations from the current node."""
@@ -243,38 +245,49 @@ class MoveManager(QObject):
         """Check if the current node has variations."""
         return len(self.current_node.variations) > 0
 
-    def redo(self, variation_index=0):
+    def redo(self, variation_index=0) -> bool:
         """Go forward into a variation. Default is main line (index 0)."""
-        if self.current_node.variations:
+        if self.current_node.variations and 0 <= variation_index < len(self.current_node.variations):
             self.current_node = self.current_node.variations[variation_index]
             self.activeNodeChanged.emit()
+            return True
+        return False
 
-    def jump_to(self, index: int):
-        if 0 <= index < len(self.nodes):
+    def jump_to(self, index: int) -> bool:
+        if 0 <= index < len(self.nodes) and self.current_node != self.nodes[index]:
             self.current_node = self.nodes[index]
             self.activeNodeChanged.emit()
+            return True
+        return False
 
-    def jump_to_start(self):
-        self.current_node = self.game
-        self.activeNodeChanged.emit()
+    def jump_to_start(self) -> bool:
+        if self.current_node != self.game:
+            self.current_node = self.game
+            self.activeNodeChanged.emit()
+            return True
+        return False
 
-    def jump_to_end(self):
-        if self.nodes:
+    def jump_to_end(self) -> bool:
+        if self.nodes and self.current_node != self.nodes[-1]:
             self.current_node = self.nodes[-1]
             self.activeNodeChanged.emit()
+            return True
+        return False
 
-    def goto_ply(self, target_ply: int):
+    def goto_ply(self, target_ply: int) -> bool:
         """Jump active move cursor to a specific half-move number (ply) along the mainline."""
         if target_ply <= 0:
-            self.jump_to_start()
-            return
+            return self.jump_to_start()
         node = self.game
         current_ply = 0
         while current_ply < target_ply and node.variations:
             node = node.variations[0]
             current_ply += 1
-        self.current_node = node
-        self.activeNodeChanged.emit()
+        if self.current_node != node:
+            self.current_node = node
+            self.activeNodeChanged.emit()
+            return True
+        return False
 
     def get_current_ply(self) -> int:
         """Return the current half-move (ply) depth of the active node."""

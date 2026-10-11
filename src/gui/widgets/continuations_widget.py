@@ -101,12 +101,20 @@ class ContinuationPercentageBar(QtWidgets.QWidget):
                 painter.drawText(QtCore.QRectF(pw + pd, 0, pb, h), QtCore.Qt.AlignCenter, f"{pct:.0f}%")
 
 
+class NoFocusDelegate(QtWidgets.QStyledItemDelegate):
+    """Delegate that suppresses the dotted cell focus rectangle on selection."""
+    def paint(self, painter, option, index):
+        opt = QtWidgets.QStyleOptionViewItem(option)
+        opt.state &= ~QtWidgets.QStyle.State_HasFocus
+        super().paint(painter, opt, index)
+
+
 class ContinuationsWidget(QtWidgets.QWidget):
     """
     ChessBase-style Common Continuations Explorer & Multi-Move Sequence Analyzer.
     - Queries top multi-move continuation paths for any position from scid-mgr.
-    - Supports binary graph (.hot.idx) or on-the-fly candidate search.
-    - Double-click a continuation line to play it on the board.
+    - Features a compact right-side line counter widget (+ / N / -) similar to engine PV controls.
+    - Headerless table for a clean, minimal, uncluttered view.
     """
 
     queryRequested = QtCore.pyqtSignal(str, dict)  # (fen, options)
@@ -119,261 +127,214 @@ class ContinuationsWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.current_fen: Optional[str] = None
         self.current_report: Optional[dict] = None
-        self.is_dark = True
+        self.is_dark = QtCore.QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
         self._lines_data: List[dict] = []
 
+        settings = QtCore.QSettings("TestChessApp", "Config")
+        self.max_lines = int(settings.value("continuations_max_lines", 6))
+        if self.max_lines < 1:
+            self.max_lines = 1
+        elif self.max_lines > 20:
+            self.max_lines = 20
+
+        self.depth = 8
+        self.min_games = 1
+        self.min_pct = 0.0
+
         self.init_ui()
+        self.set_theme(self.is_dark)
 
     def init_ui(self):
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setSpacing(2)
 
-        # 1. Controls / Parameters Bar
-        self.controls_frame = QtWidgets.QFrame(self)
-        self.controls_frame.setObjectName("ContinuationsControlsFrame")
-        c_layout = QtWidgets.QHBoxLayout(self.controls_frame)
-        c_layout.setContentsMargins(6, 4, 6, 4)
-        c_layout.setSpacing(6)
+        content_layout = QtWidgets.QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(4)
 
-        # Depth
-        lbl_depth = QtWidgets.QLabel("Depth:")
-        lbl_depth.setStyleSheet("font-weight: 600; font-size: 11px;")
-        c_layout.addWidget(lbl_depth)
-
-        self.spin_depth = QtWidgets.QSpinBox()
-        self.spin_depth.setRange(1, 24)
-        self.spin_depth.setValue(8)
-        self.spin_depth.setSuffix(" plies")
-        self.spin_depth.setToolTip("Maximum continuation depth (plies / half-moves)")
-        self.spin_depth.valueChanged.connect(self._on_param_changed)
-        c_layout.addWidget(self.spin_depth)
-
-        # Max Lines
-        lbl_lines = QtWidgets.QLabel("Lines:")
-        lbl_lines.setStyleSheet("font-weight: 600; font-size: 11px;")
-        c_layout.addWidget(lbl_lines)
-
-        self.spin_max_lines = QtWidgets.QSpinBox()
-        self.spin_max_lines.setRange(1, 30)
-        self.spin_max_lines.setValue(10)
-        self.spin_max_lines.setToolTip("Maximum continuation lines to display")
-        self.spin_max_lines.valueChanged.connect(self._on_param_changed)
-        c_layout.addWidget(self.spin_max_lines)
-
-        # Min Games
-        lbl_min_games = QtWidgets.QLabel("Min Games:")
-        lbl_min_games.setStyleSheet("font-weight: 600; font-size: 11px;")
-        c_layout.addWidget(lbl_min_games)
-
-        self.spin_min_games = QtWidgets.QSpinBox()
-        self.spin_min_games.setRange(1, 10000)
-        self.spin_min_games.setValue(1)
-        self.spin_min_games.setToolTip("Filter out lines occurring fewer than N times")
-        self.spin_min_games.valueChanged.connect(self._on_param_changed)
-        c_layout.addWidget(self.spin_min_games)
-
-        # Min %
-        lbl_min_pct = QtWidgets.QLabel("Min %:")
-        lbl_min_pct.setStyleSheet("font-weight: 600; font-size: 11px;")
-        c_layout.addWidget(lbl_min_pct)
-
-        self.spin_min_pct = QtWidgets.QDoubleSpinBox()
-        self.spin_min_pct.setRange(0.0, 100.0)
-        self.spin_min_pct.setValue(0.0)
-        self.spin_min_pct.setSingleStep(1.0)
-        self.spin_min_pct.setSuffix("%")
-        self.spin_min_pct.setToolTip("Minimum percentage share of position games")
-        self.spin_min_pct.valueChanged.connect(self._on_param_changed)
-        c_layout.addWidget(self.spin_min_pct)
-
-        c_layout.addStretch()
-
-        # Auto-query
-        self.chk_auto = QtWidgets.QCheckBox("Auto")
-        self.chk_auto.setChecked(True)
-        self.chk_auto.setToolTip("Automatically calculate continuations on position change")
-        c_layout.addWidget(self.chk_auto)
-
-        # Manual Query Button
-        self.btn_query = QtWidgets.QPushButton("▶ Query")
-        self.btn_query.setToolTip("Run common continuations analysis for current position")
-        self.btn_query.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_query.clicked.connect(self.trigger_query)
-        c_layout.addWidget(self.btn_query)
-
-        layout.addWidget(self.controls_frame)
-        self.controls_frame.hide()  # Hidden by default to maximize space
-
-        # 2. Summary Status Frame (Header with Options Toggle)
-        self.summary_frame = QtWidgets.QFrame(self)
-        self.summary_frame.setObjectName("ContinuationsSummaryFrame")
-        s_layout = QtWidgets.QHBoxLayout(self.summary_frame)
-        s_layout.setContentsMargins(6, 3, 6, 3)
-        s_layout.setSpacing(10)
-
-        # Toggle Controls Button
-        self.btn_toggle_controls = QtWidgets.QPushButton("⚙ Options")
-        self.btn_toggle_controls.setCheckable(True)
-        self.btn_toggle_controls.setChecked(False)
-        self.btn_toggle_controls.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_toggle_controls.setToolTip("Show / Hide Continuation Query Parameters (Depth, Lines, Min Games, Min %)")
-        self.btn_toggle_controls.toggled.connect(self.controls_frame.setVisible)
-        s_layout.addWidget(self.btn_toggle_controls)
-
-        self.lbl_pos_games = QtWidgets.QLabel("Position Games: -")
-        self.lbl_pos_games.setStyleSheet("font-weight: bold; font-size: 11px;")
-        s_layout.addWidget(self.lbl_pos_games)
-
-        self.lbl_total_db = QtWidgets.QLabel("Total DB Games: -")
-        self.lbl_total_db.setStyleSheet("font-size: 11px; color: #888;")
-        s_layout.addWidget(self.lbl_total_db)
-
-        s_layout.addStretch()
-
-        self.lbl_source_badge = QtWidgets.QLabel("⚡ Ready")
-        self.lbl_source_badge.setStyleSheet("font-weight: 600; font-size: 11px; color: #2e7d32;")
-        s_layout.addWidget(self.lbl_source_badge)
-
-        layout.addWidget(self.summary_frame)
-
-        # 3. Main Continuations Table
+        # 1. Main Continuations Table (Headerless)
         self.table = QtWidgets.QTableWidget(self)
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Continuation Line", "Games (%)", "Score (W / D / B)"])
+        self.table.setColumnCount(4)
+        self.table.horizontalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
-        self.table.horizontalHeader().resizeSection(2, 140)
+        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Interactive)
+        self.table.horizontalHeader().resizeSection(2, 120)
+        self.table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeToContents)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
-        self.table.setAlternatingRowColors(True)
+        self.table.setAlternatingRowColors(False)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
         self.table.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
 
-        layout.addWidget(self.table, stretch=1)
+        content_layout.addWidget(self.table, stretch=1)
+
+        # 2. Right-side Line Control Widget (+ / N / -)
+        self.lines_ctrl_widget = QtWidgets.QWidget(self)
+        self.lines_ctrl_widget.setFixedWidth(24)
+        v_layout = QtWidgets.QVBoxLayout(self.lines_ctrl_widget)
+        v_layout.setContentsMargins(0, 2, 0, 2)
+        v_layout.setSpacing(2)
+
+        from utils.helpers import _qicon
+
+        self.btn_plus_lines = QtWidgets.QToolButton(self.lines_ctrl_widget)
+        self.btn_plus_lines.setIcon(_qicon("fa6s.plus", is_dark=self.is_dark))
+        self.btn_plus_lines.setIconSize(QtCore.QSize(10, 10))
+        self.btn_plus_lines.setFixedSize(22, 22)
+        self.btn_plus_lines.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_plus_lines.setToolTip("More continuation lines")
+        self.btn_plus_lines.clicked.connect(self.increment_lines)
+
+        self.lbl_lines = QtWidgets.QLabel(f"{self.max_lines}", self.lines_ctrl_widget)
+        self.lbl_lines.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.Bold))
+        self.lbl_lines.setAlignment(QtCore.Qt.AlignCenter)
+        self.lbl_lines.setToolTip(f"Show top {self.max_lines} continuation lines")
+
+        self.btn_minus_lines = QtWidgets.QToolButton(self.lines_ctrl_widget)
+        self.btn_minus_lines.setIcon(_qicon("fa6s.minus", is_dark=self.is_dark))
+        self.btn_minus_lines.setIconSize(QtCore.QSize(10, 10))
+        self.btn_minus_lines.setFixedSize(22, 22)
+        self.btn_minus_lines.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_minus_lines.setToolTip("Fewer continuation lines")
+        self.btn_minus_lines.clicked.connect(self.decrement_lines)
+
+        v_layout.addWidget(self.btn_plus_lines)
+        v_layout.addWidget(self.lbl_lines)
+        v_layout.addWidget(self.btn_minus_lines)
+        v_layout.addStretch()
+
+        content_layout.addWidget(self.lines_ctrl_widget)
+        main_layout.addLayout(content_layout)
 
         # Status / Empty Label overlay
         self.status_label = QtWidgets.QLabel("Open a database and navigate to explore common continuations.", self)
         self.status_label.setAlignment(QtCore.Qt.AlignCenter)
         self.status_label.setStyleSheet("color: #888; font-style: italic; padding: 20px;")
-        layout.addWidget(self.status_label)
+        main_layout.addWidget(self.status_label)
+
+    def increment_lines(self):
+        if self.max_lines < 20:
+            self.max_lines += 1
+            self._update_lines_state()
+
+    def decrement_lines(self):
+        if self.max_lines > 1:
+            self.max_lines -= 1
+            self._update_lines_state()
+
+    def _update_lines_state(self):
+        self.lbl_lines.setText(str(self.max_lines))
+        self.lbl_lines.setToolTip(f"Show top {self.max_lines} continuation lines")
+        self.btn_minus_lines.setEnabled(self.max_lines > 1)
+        self.btn_plus_lines.setEnabled(self.max_lines < 20)
+        QtCore.QSettings("TestChessApp", "Config").setValue("continuations_max_lines", self.max_lines)
+        if self.current_fen and self.isVisible():
+            self.trigger_query()
 
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
-        if is_dark:
-            self.controls_frame.setStyleSheet(
-                "QFrame#ContinuationsControlsFrame { background-color: #21201d; border-radius: 4px; border: 1px solid #383531; }"
-            )
-            self.summary_frame.setStyleSheet(
-                "QFrame#ContinuationsSummaryFrame { background-color: #262421; border-radius: 4px; border: 1px solid #383531; }"
-            )
-            self.btn_toggle_controls.setStyleSheet("""
-                QPushButton {
-                    background-color: #312e2b;
-                    color: #e2e8f0;
-                    border: 1px solid #403d39;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #3f3c38;
-                }
-                QPushButton:checked {
-                    background-color: #1e3a5f;
-                    border: 1px solid #3b82f6;
-                    color: #60a5fa;
-                }
-            """)
-            self.lbl_pos_games.setStyleSheet("font-weight: bold; font-size: 11px; color: #e2e8f0;")
-            self.lbl_total_db.setStyleSheet("font-size: 11px; color: #94a3b8;")
-            self.status_label.setStyleSheet("color: #94a3b8; font-style: italic; padding: 20px;")
-        else:
-            self.controls_frame.setStyleSheet(
-                "QFrame#ContinuationsControlsFrame { background-color: #f1f5f9; border-radius: 4px; border: 1px solid #cbd5e1; }"
-            )
-            self.summary_frame.setStyleSheet(
-                "QFrame#ContinuationsSummaryFrame { background-color: #f8fafc; border-radius: 4px; border: 1px solid #cbd5e1; }"
-            )
-            self.btn_toggle_controls.setStyleSheet("""
-                QPushButton {
-                    background-color: #ffffff;
-                    color: #0f172a;
-                    border: 1px solid #cbd5e1;
-                    border-radius: 3px;
-                    padding: 2px 8px;
-                    font-size: 11px;
-                }
-                QPushButton:hover {
-                    background-color: #f1f5f9;
-                }
-                QPushButton:checked {
-                    background-color: #dbeafe;
-                    border: 1px solid #2563eb;
-                    color: #1d4ed8;
-                }
-            """)
-            self.lbl_pos_games.setStyleSheet("font-weight: bold; font-size: 11px; color: #0f172a;")
-            self.lbl_total_db.setStyleSheet("font-size: 11px; color: #64748b;")
-            self.status_label.setStyleSheet("color: #64748b; font-style: italic; padding: 20px;")
+        from utils.helpers import _qicon
+        self.btn_plus_lines.setIcon(_qicon("fa6s.plus", is_dark=is_dark))
+        self.btn_minus_lines.setIcon(_qicon("fa6s.minus", is_dark=is_dark))
 
-        # Update percentage bars in table
-        for r in range(self.table.rowCount()):
-            cell_widget = self.table.cellWidget(r, 2)
-            if isinstance(cell_widget, ContinuationPercentageBar):
-                cell_widget.set_theme(is_dark)
+        bg = "#262421" if is_dark else "#ffffff"
+        text_color = "#bababa" if is_dark else "#0f172a"
+        sel_bg = "#1e3a5f" if is_dark else "#2563eb"
+        sel_color = "#ffffff"
+        btn_bg = "#312e2b" if is_dark else "#f1f5f9"
+        btn_border = "#403d39" if is_dark else "#cbd5e1"
+        btn_hover = "#3f3c38" if is_dark else "#e2e8f0"
+        lbl_color = "#f8fafc" if is_dark else "#0f172a"
+
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {bg};
+                color: {text_color};
+                border: none;
+                font-size: 11px;
+                selection-background-color: {sel_bg};
+                selection-color: {sel_color};
+                outline: none;
+            }}
+            QTableWidget::item {{
+                outline: none;
+                border: none;
+            }}
+            QTableWidget::item:selected {{
+                background-color: {sel_bg};
+                color: {sel_color};
+                outline: none;
+                border: none;
+            }}
+            QTableWidget::item:focus {{
+                outline: none;
+                border: none;
+            }}
+            QTableWidget::item:selected:focus {{
+                background-color: {sel_bg};
+                color: {sel_color};
+                outline: none;
+                border: none;
+            }}
+        """)
+
+        btn_style = f"""
+            QToolButton {{
+                background-color: {btn_bg};
+                color: {lbl_color};
+                border: 1px solid {btn_border};
+                border-radius: 3px;
+                padding: 1px;
+            }}
+            QToolButton:hover {{
+                background-color: {btn_hover};
+            }}
+            QToolButton:disabled {{
+                opacity: 0.4;
+            }}
+        """
+        self.btn_plus_lines.setStyleSheet(btn_style)
+        self.btn_minus_lines.setStyleSheet(btn_style)
+        self.lbl_lines.setStyleSheet(f"color: {lbl_color}; font-weight: bold; font-size: 10px;")
+        self.status_label.setStyleSheet("color: #94a3b8; font-style: italic; padding: 20px;" if is_dark else "color: #64748b; font-style: italic; padding: 20px;")
+
+        for row in range(self.table.rowCount()):
+            w = self.table.cellWidget(row, 2)
+            if isinstance(w, ContinuationPercentageBar):
+                w.set_theme(is_dark)
 
     def set_position(self, fen: str):
         self.current_fen = fen
-        if self.chk_auto.isChecked() and self.isVisible():
-            self.trigger_query()
 
     def trigger_query(self):
         if not self.current_fen:
             return
 
         options = {
-            "max_depth": self.spin_depth.value(),
-            "max_lines": self.spin_max_lines.value(),
-            "min_games": self.spin_min_games.value(),
-            "min_percentage": self.spin_min_pct.value(),
+            "max_depth": 8,
+            "max_lines": self.max_lines,
+            "min_games": 1,
+            "min_percentage": 0.0,
         }
-        self.lbl_source_badge.setText("⏳ Calculating...")
-        self.lbl_source_badge.setStyleSheet("font-weight: 600; font-size: 11px; color: #b86f1b;")
         self.queryRequested.emit(self.current_fen, options)
-
-    def _on_param_changed(self):
-        if self.chk_auto.isChecked() and self.current_fen and self.isVisible():
-            self.trigger_query()
 
     def set_report(self, report: dict):
         self.current_report = report
         lines = report.get("lines", [])
-        total_db = report.get("total_games_processed", 0)
         pos_games = report.get("games_reaching_position", 0)
-        source = report.get("source", "hot_graph" if report.get("from_hot_graph") else "dynamic")
-
-        self.lbl_pos_games.setText(f"Position Games: {pos_games:,}")
-        self.lbl_total_db.setText(f"Total DB Games: {total_db:,}")
-
-        if "hot" in str(source).lower():
-            self.lbl_source_badge.setText("⚡ Precomputed .hot.idx")
-            self.lbl_source_badge.setStyleSheet("font-weight: 600; font-size: 11px; color: #2e7d32;")
-        else:
-            self.lbl_source_badge.setText("⚡ Dynamic Candidate Search")
-            self.lbl_source_badge.setStyleSheet("font-weight: 600; font-size: 11px; color: #0284c7;")
-
         self._lines_data = lines
 
         if not lines:
             self.table.setRowCount(0)
             self.table.hide()
             self.status_label.setText(
-                f"No continuations found matching criteria ({pos_games:,} games reach this position)."
+                f"No continuations found ({pos_games:,} games reach this position)."
             )
             self.status_label.show()
             return
@@ -407,13 +368,27 @@ class ContinuationsWidget(QtWidgets.QWidget):
             bar.set_theme(self.is_dark)
             self.table.setCellWidget(row, 2, bar)
 
+            # Col 3: Last Date / Year
+            last_year = line_info.get("last_year") or line_info.get("last_played") or line_info.get("year")
+            year_str = str(last_year) if last_year else "-"
+            item_year = QtWidgets.QTableWidgetItem(year_str)
+            item_year.setFont(QtGui.QFont("Segoe UI", 9))
+            item_year.setTextAlignment(QtCore.Qt.AlignCenter)
+            item_year.setToolTip(f"Last played: {year_str}")
+            self.table.setItem(row, 3, item_year)
+
+            self.table.setRowHeight(row, 24)
+
     def show_status(self, text: str):
         self.table.setRowCount(0)
         self.table.hide()
         self.status_label.setText(text)
         self.status_label.show()
-        self.lbl_source_badge.setText("Ready")
-        self.lbl_source_badge.setStyleSheet("font-weight: 600; font-size: 11px; color: #888;")
+
+    def set_progress(self, scanned: int, total: int, percent: float):
+        self.table.hide()
+        self.status_label.setText(f"Scanning database... {scanned:,} / {total:,} games ({percent:.1f}%)")
+        self.status_label.show()
 
     def _on_item_double_clicked(self, item: QtWidgets.QTableWidgetItem):
         row = item.row()
@@ -423,10 +398,4 @@ class ContinuationsWidget(QtWidgets.QWidget):
                 self.continuationSelected.emit(moves)
 
     def _on_selection_changed(self):
-        selected_rows = self.table.selectionModel().selectedRows()
-        if selected_rows:
-            row = selected_rows[0].row()
-            if 0 <= row < len(self._lines_data):
-                moves = self._lines_data[row].get("moves", [])
-                # Hover preview or notification can be emitted
-                pass
+        pass

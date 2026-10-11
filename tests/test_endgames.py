@@ -79,7 +79,6 @@ def test_endgames_widget_populate_and_filter(qapp):
     }
 
     widget.set_report(sample_report)
-    assert "500" in widget.lbl_pos_games.text()
     assert widget.table.topLevelItemCount() == 2
 
     # Filter to ROOK only

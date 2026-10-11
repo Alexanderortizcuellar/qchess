@@ -9,6 +9,9 @@ class ChessEngine(QtCore.QProcess):
     depthChanged = QtCore.pyqtSignal(int)
     analysisUpdated = QtCore.pyqtSignal(dict)  # Emits dict with MultiPV info
     engineNameChanged = QtCore.pyqtSignal(str)
+    engineStarting = QtCore.pyqtSignal()
+    engineReady = QtCore.pyqtSignal()
+    engineError = QtCore.pyqtSignal(str)
 
     def __init__(self, engine_path="stockfish", parent=None):
         super().__init__(parent)
@@ -22,12 +25,20 @@ class ChessEngine(QtCore.QProcess):
         }
         self.setProcessChannelMode(QtCore.QProcess.MergedChannels)
         self.readyReadStandardOutput.connect(self.read_data)
+        self.started.connect(self._on_started)
+        self.errorOccurred.connect(self._on_error)
+        self.finished.connect(self._on_finished)
+
         self.analysis_data = {}
         self.current_analyzing_fen = None
         self.searching = False
         self.next_analyzing_fen = None
         self.next_mode = "depth"
         self.next_options = {"depth": 20}
+
+        self.is_uci_ready = False
+        self.is_starting = False
+        self.pending_search = None
 
     @staticmethod
     def _infer_name_from_path(path: str) -> str:
@@ -38,6 +49,25 @@ class ChessEngine(QtCore.QProcess):
         if not base or base.lower() == "stockfish":
             return "Stockfish"
         return base.replace("-", " ").replace("_", " ").title()
+
+    def _on_started(self):
+        """Called asynchronously when engine process has started."""
+        self.send_command("uci")
+
+    def _on_error(self, error):
+        """Handle process startup or runtime error without blocking."""
+        self.is_uci_ready = False
+        self.is_starting = False
+        self.searching = False
+        self.pending_search = None
+        self.engineError.emit(str(error))
+
+    def _on_finished(self, exit_code, exit_status):
+        """Handle process termination."""
+        self.is_uci_ready = False
+        self.is_starting = False
+        self.searching = False
+        self.pending_search = None
 
     def read_data(self):
         try:
@@ -54,7 +84,28 @@ class ChessEngine(QtCore.QProcess):
                     self.engineNameChanged.emit(name)
 
             if "uciok" in line:
+                # Apply configured UCI options on handshake
+                self.set_option("Threads", self.engine_config.get("threads", 1))
+                self.set_option("Hash", self.engine_config.get("hash", 16))
+                self.set_option("MultiPV", self.engine_config.get("multipv", 1))
+                syzygy = self.engine_config.get("syzygy")
+                if syzygy:
+                    self.set_option("SyzygyPath", syzygy)
                 self.send_command("isready")
+
+            if "readyok" in line:
+                self.is_uci_ready = True
+                self.is_starting = False
+                self.engineReady.emit()
+
+                # If a search was queued while engine was launching/initializing, start it now
+                if self.pending_search is not None:
+                    pos, mode, opts = self.pending_search
+                    self.pending_search = None
+                    self.current_analyzing_fen = pos
+                    self.next_analyzing_fen = None
+                    self.searching = True
+                    self._start_search(pos, mode, opts)
 
             if line.startswith("bestmove"):
                 match = re.search(r"bestmove\s+(\S+)", line)
@@ -125,51 +176,42 @@ class ChessEngine(QtCore.QProcess):
     def set_multipv(self, count: int):
         """Dynamically update MultiPV, stopping search and syncing cleanly with UCI engine."""
         self.engine_config["multipv"] = count
-        if not self.is_running():
+        if not self.is_running() or not self.is_uci_ready:
             return
-        
+
         # Stop current search and apply option
         self.send_command("stop")
         self.send_command(f"setoption name MultiPV value {count}")
         self.send_command("isready")
 
     def ensure_started(self) -> bool:
-        """Start the engine process if it is not already running and configure UCI."""
+        """Start the engine process asynchronously without blocking the Qt event loop."""
         if self.is_running():
+            if not self.is_uci_ready and not self.is_starting:
+                self.send_command("uci")
             return True
 
         if not self.engine_path:
             return False
 
+        self.is_uci_ready = False
+        self.is_starting = True
+        self.engineStarting.emit()
+
         self.setProgram(self.engine_path)
         self.start()
-        if not self.waitForStarted(3000):
-            return False
-
-        self.send_command("uci")
-        if not self.waitForReadyRead(1000):
-            pass
-
-        self.set_option("Threads", self.engine_config.get("threads", 1))
-        self.set_option("Hash", self.engine_config.get("hash", 16))
-        self.set_option("MultiPV", self.engine_config.get("multipv", 1))
-
-        syzygy = self.engine_config.get("syzygy")
-        if syzygy:
-            self.set_option("SyzygyPath", syzygy)
-
-        self.send_command("isready")
         return True
 
     def send_position(
         self, position: str, mode: Literal["depth", "time"] = "depth", options: dict = None
     ):
-        if not self.is_running():
-            if not self.ensure_started():
-                return
-
         if options is None:
             options = {"depth": 20}
+
+        if not self.is_running() or not self.is_uci_ready:
+            self.pending_search = (position, mode, options)
+            self.ensure_started()
+            return
 
         if self.searching:
             self.next_analyzing_fen = position
@@ -192,47 +234,55 @@ class ChessEngine(QtCore.QProcess):
             self.send_command("go infinite")
 
     def stop_search(self):
+        self.pending_search = None
         self.next_analyzing_fen = None
         self.searching = False
-        self.send_command("stop")
+        if self.is_running():
+            self.send_command("stop")
 
     def set_settings(self, settings: dict):
-        """Update engine configuration. Restarts process only if it is already running."""
-        was_running = self.is_running()
-        if was_running:
-            self.quit()
-
+        """Update engine configuration without unnecessary process restarts."""
+        path_changed = False
         if "path" in settings and settings["path"]:
             new_path = settings["path"]
             if new_path != self.engine_path:
                 self.engine_path = new_path
                 self.engine_name = self._infer_name_from_path(new_path)
                 self.engineNameChanged.emit(self.engine_name)
+                path_changed = True
         elif "path" in settings:
             self.engine_path = settings.get("path", self.engine_path)
 
         self.engine_config.update(settings)
 
-        if was_running:
+        if path_changed and self.is_running():
+            self.quit()
             self.ensure_started()
+        elif self.is_running() and self.is_uci_ready:
+            self.send_command("stop")
+            self.set_option("Threads", self.engine_config.get("threads", 1))
+            self.set_option("Hash", self.engine_config.get("hash", 16))
+            self.set_option("MultiPV", self.engine_config.get("multipv", 1))
+            syzygy = self.engine_config.get("syzygy")
+            if syzygy:
+                self.set_option("SyzygyPath", syzygy)
+            self.send_command("isready")
 
     def send_command(self, command: str):
         if self.state() == QtCore.QProcess.Running:
             self.write(f"{command}\n".encode())
 
     def quit(self):
-        """Cleanly terminate the engine process and release all its resources."""
+        """Cleanly terminate the engine process asynchronously without blocking the UI."""
         self.searching = False
+        self.pending_search = None
         self.next_analyzing_fen = None
         self.current_analyzing_fen = None
+        self.is_uci_ready = False
+        self.is_starting = False
         if self.state() != QtCore.QProcess.NotRunning:
             self.send_command("quit")
-            if not self.waitForFinished(1000):
-                self.terminate()
-                if not self.waitForFinished(1000):
-                    self.kill()
-                    self.waitForFinished(500)
-        self.close()
+            self.close()
 
     def is_running(self):
         return self.state() != QtCore.QProcess.NotRunning

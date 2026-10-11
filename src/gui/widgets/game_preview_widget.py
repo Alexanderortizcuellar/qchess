@@ -81,7 +81,7 @@ class GamePreviewWidget(QWidget):
 
         self.chessboard = ChessBoard(self.board_container, fen=chess.STARTING_FEN, size=0)
         self.chessboard.interactive = False
-        self.chessboard.setMinimumSize(120, 120)
+        self.chessboard.setMinimumSize(200, 200)
         self.chessboard.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         board_layout.addWidget(self.chessboard)
 
@@ -141,13 +141,19 @@ class GamePreviewWidget(QWidget):
         self.splitter.addWidget(self.browser)
 
         # Proportions and stretch factors
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setSizes([280, 220])
+        self.splitter.setStretchFactor(0, 3)
+        self.splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes([420, 220])
 
         main_layout.addWidget(self.splitter, 1)
 
         self.apply_theme_styles()
+
+    def sizeHint(self) -> QSize:
+        return QSize(440, 680)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(320, 420)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

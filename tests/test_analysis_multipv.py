@@ -81,3 +81,42 @@ def test_analysis_widget_clears_stale_multipv_on_fen_change(qapp):
     w.update_analysis(info_p2_line2, board_fen=fen_pos_2)
     assert len(w.lines_view.lines) == 2
     assert w.lines_view.lines[1].tokens[0].san == "2. d4"
+
+
+def test_analysis_widget_loading_indicator_and_states(qapp):
+    """Verify AnalysisWidget smoothly starts/stops animated loading indicator without UI freezes."""
+    w = AnalysisWidget()
+    assert not w.lines_view.is_loading
+    assert w.lines_view.placeholder_text == "Enable engine for analysis..."
+
+    # 1. Enable engine analysis -> enters starting status
+    w.check_analysis.setChecked(True)
+    assert w.lines_view.is_loading
+    assert "Starting" in w.lines_view.placeholder_text
+    assert w.lines_view.spinner_timer.isActive()
+
+    # 2. Reset lines while enabled -> shows analyzing position loading
+    w.reset_lines()
+    assert w.lines_view.is_loading
+    assert "Analyzing position" in w.lines_view.placeholder_text
+
+    # 3. Receive engine evaluation lines -> loading automatically stops and lines are shown
+    info = {
+        "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "multipv": 1,
+        "score_type": "cp",
+        "score_value": 25,
+        "pv": ["e2e4", "e7e5"],
+        "depth": 10,
+    }
+    w.update_analysis(info, board_fen=info["fen"])
+    assert not w.lines_view.is_loading
+    assert not w.lines_view.spinner_timer.isActive()
+    assert len(w.lines_view.lines) == 1
+
+    # 4. Disable engine -> loading stops and reset to idle placeholder
+    w.check_analysis.setChecked(False)
+    assert not w.lines_view.is_loading
+    assert not w.lines_view.spinner_timer.isActive()
+    assert w.lines_view.placeholder_text == "Enable engine for analysis..."
+

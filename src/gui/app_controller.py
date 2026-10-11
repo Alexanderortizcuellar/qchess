@@ -1,9 +1,11 @@
+import time
 from PyQt5.QtCore import QObject, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 from typing import Optional, List
 
 from gui.home_window import HomeWindow
 from gui.app import ChessApp
+from core.reference_filters import get_reference_filter_manager
 
 
 class ApplicationController(QObject):
@@ -49,6 +51,16 @@ class ApplicationController(QObject):
         self.home.databaseOpened.connect(self._on_database_opened)
         self.home.themeChangeRequested.connect(self.set_style)
         self.home.destroyed.connect(self.shutdown)
+
+        # Wire streaming backend progress signals for dynamic fallback scans
+        if hasattr(self.home.scid_client, "opening_tree_progress"):
+            self.home.scid_client.opening_tree_progress.connect(self._on_opening_tree_progress)
+        if hasattr(self.home.scid_client, "continuations_progress"):
+            self.home.scid_client.continuations_progress.connect(self._on_continuations_progress)
+
+        # Wire global reference database filter manager
+        self.ref_filter_mgr = get_reference_filter_manager()
+        self.ref_filter_mgr.filtersChanged.connect(self._on_reference_filters_changed)
 
         # Pre-warm an editor window in the background for fast startup
         QTimer.singleShot(250, self._prewarm_editor)
@@ -140,7 +152,13 @@ class ApplicationController(QObject):
         editor.continuations_widget.buildHotIndexRequested.connect(lambda ed=editor: self._on_build_hot_index_requested(ed))
         editor.endgames_widget.queryRequested.connect(lambda fen, opt, ed=editor: self._on_endgames_query_requested(fen, opt, ed))
         editor.endgames_widget.buildEndgamesIndexRequested.connect(lambda ed=editor: self._on_build_endgames_index_requested(ed))
+        if hasattr(editor, "position_games_widget"):
+            editor.position_games_widget.set_client(self.home.scid_client)
+            editor.position_games_widget.queryRequested.connect(lambda fen, flt, ed=editor: self._on_position_games_query_requested(fen, flt, ed))
+            editor.position_games_widget.gameSelected.connect(lambda gid, summ, ed=editor: self._on_sample_game_selected(gid, summ, ed))
         editor.themeChanged.connect(self.set_style)
+        if hasattr(editor, "referenceRequested"):
+            editor.referenceRequested.connect(lambda fen, force, ed=editor: self._query_unified_reference(fen, None, ed, force=force))
         editor.closed.connect(lambda ed=editor: self._on_editor_closed(ed))
 
         editor.set_style(self._current_style)
@@ -304,107 +322,262 @@ class ApplicationController(QObject):
         self.home.open_search_dialog(initial_filter={"fen": fen})
 
     def _on_database_opened(self, db_path: str, format_name: str):
-        """When a database is opened in HomeWindow, refresh opening explorer, continuations, and endgames in all open windows."""
+        """When a database is opened in HomeWindow, refresh opening explorer, continuations, endgames, and games in all open windows."""
         for editor in self._editors:
             if editor.isVisible():
-                if hasattr(editor, "opxl"):
-                    editor.send_fen_to_opxl(editor.chessboard.fen())
-                if hasattr(editor, "continuations_widget"):
-                    editor.send_fen_to_continuations(editor.chessboard.fen())
-                if hasattr(editor, "endgames_widget"):
-                    editor.send_fen_to_endgames(editor.chessboard.fen())
+                editor._loaded_tree_fen = None
+                editor._loaded_cont_fen = None
+                editor._loaded_endg_fen = None
+                editor._loaded_games_fen = None
+                if hasattr(editor, "send_reference"):
+                    editor.send_reference(editor.chessboard.fen(), force=True)
+                elif hasattr(editor, "send_fen_to_opxl"):
+                    editor.send_fen_to_opxl(editor.chessboard.fen(), force=True)
+
+    def _on_opening_tree_progress(self, prog_data: dict):
+        """Streaming progress event from backend during dynamic tree scan."""
+        scanned = prog_data.get("scanned", 0)
+        total = prog_data.get("total", 0)
+        percent = float(prog_data.get("percent", 0.0))
+
+        now = time.time()
+        for editor in self._editors:
+            start_t = getattr(editor, "_opxl_query_start_time", None)
+            if start_t is not None and (now - start_t) >= 0.3:
+                if hasattr(editor, "opxl") and hasattr(editor.opxl, "set_progress"):
+                    editor.opxl.set_progress(scanned, total, percent)
+                if hasattr(editor, "statusBar"):
+                    editor.statusBar().showMessage(
+                        f"Opening Tree: scanning {scanned:,} / {total:,} games ({percent:.1f}%)..."
+                    )
+
+    def _on_continuations_progress(self, prog_data: dict):
+        """Streaming progress event from backend during dynamic continuations scan."""
+        scanned = prog_data.get("scanned", 0)
+        total = prog_data.get("total", 0)
+        percent = float(prog_data.get("percent", 0.0))
+
+        now = time.time()
+        for editor in self._editors:
+            start_t = getattr(editor, "_cont_query_start_time", None)
+            if start_t is not None and (now - start_t) >= 0.3:
+                if hasattr(editor, "continuations_widget") and hasattr(editor.continuations_widget, "set_progress"):
+                    editor.continuations_widget.set_progress(scanned, total, percent)
+                if hasattr(editor, "statusBar"):
+                    editor.statusBar().showMessage(
+                        f"Continuations: scanning {scanned:,} / {total:,} games ({percent:.1f}%)..."
+                    )
+
+    def _on_reference_filters_changed(self, filter_dict: dict):
+        """When global reference filters change, immediately re-query active reference docks in all open editors."""
+        for editor in self._editors:
+            if editor.isVisible():
+                editor._loaded_tree_fen = None
+                editor._loaded_cont_fen = None
+                editor._loaded_endg_fen = None
+                editor._loaded_games_fen = None
+                fen = editor.chessboard.fen()
+                if hasattr(editor, "send_reference"):
+                    editor.send_reference(fen, force=True)
+                elif hasattr(editor, "send_fen_to_opxl"):
+                    editor.send_fen_to_opxl(fen, force=True)
 
     def _on_explorer_query_requested(self, fen: str, filters: dict, editor: ChessApp):
-        """Route Opening Explorer queries from a specific editor to the background scid-mgr process."""
-        if editor not in self._editors:
-            return
-
-        if not self.home.scid_client.is_running() or not self.home._current_db_path:
-            editor.opxl.show_status("Open a database in QChess to explore opening statistics.")
-            return
-
-        def on_tree_ready(resp: dict):
-            if editor not in self._editors:
-                return
-            if resp.get("status") == "ok":
-                data = resp.get("data", {})
-                editor.opxl.set_tree_data(data)
-            else:
-                err = resp.get("error", "Error querying opening tree")
-                editor.opxl.show_status(f"Opening explorer: {err}")
-
-        try:
-            self.home.scid_client.opening_tree(
-                fen=fen,
-                filters=filters if filters else None,
-                max_sample_games=20,
-                callback=on_tree_ready,
-            )
-        except Exception as e:
-            editor.opxl.show_status(f"Opening explorer error: {e}")
+        """Route Opening Explorer queries via the unified reference orchestrator."""
+        self._query_unified_reference(fen, filters, editor)
 
     def _on_continuations_query_requested(self, fen: str, options: dict, editor: ChessApp):
-        """Route Common Continuations queries from a specific editor to the background scid-mgr process."""
-        if editor not in self._editors:
-            return
-
-        if not self.home.scid_client.is_running() or not self.home._current_db_path:
-            editor.continuations_widget.show_status("Open a database in QChess to analyze common continuations.")
-            return
-
-        def on_continuations_ready(resp: dict):
-            if editor not in self._editors:
-                return
-            if resp.get("status") == "ok":
-                data = resp.get("data", {})
-                editor.continuations_widget.set_report(data)
-            else:
-                err = resp.get("error", "Error calculating continuations")
-                editor.continuations_widget.show_status(f"Continuations error: {err}")
-
-        try:
-            self.home.scid_client.continuations(
-                fen=fen,
-                max_depth=options.get("max_depth", 8),
-                max_lines=options.get("max_lines", 10),
-                min_games=options.get("min_games", 1),
-                min_percentage=options.get("min_percentage", 0.0),
-                callback=on_continuations_ready,
-            )
-        except Exception as e:
-            editor.continuations_widget.show_status(f"Continuations query error: {e}")
+        """Route Continuations queries via the unified reference orchestrator."""
+        self._query_unified_reference(fen, None, editor, options=options)
 
     def _on_endgames_query_requested(self, fen: str, options: dict, editor: ChessApp):
-        """Route Endgame Popularity queries from a specific editor to the background scid-mgr process."""
+        """Route Endgame Popularity queries via the unified reference orchestrator."""
+        self._query_unified_reference(fen, None, editor, options=options)
+
+    def _on_position_games_query_requested(self, fen: str, filters: dict, editor: ChessApp):
+        """Route Matching Games queries via the unified reference orchestrator."""
+        self._query_unified_reference(fen, filters, editor)
+
+    def _query_unified_reference(
+        self,
+        fen: str,
+        filters: Optional[dict],
+        editor: ChessApp,
+        options: Optional[dict] = None,
+        force: bool = False,
+    ):
+        """Unified orchestrator querying Tree, Continuations, Endgames, and Games in a single pass."""
         if editor not in self._editors:
             return
 
         if not self.home.scid_client.is_running() or not self.home._current_db_path:
-            editor.endgames_widget.show_status("Open a database in QChess to explore endgame statistics.")
+            if hasattr(editor, "opxl"):
+                editor.opxl.show_status("Open a database in QChess to explore opening statistics.")
+            if hasattr(editor, "continuations_widget"):
+                editor.continuations_widget.show_status("Open a database in QChess to analyze common continuations.")
+            if hasattr(editor, "endgames_widget"):
+                editor.endgames_widget.show_status("Open a database in QChess to explore endgame statistics.")
+            if hasattr(editor, "position_games_widget"):
+                editor.position_games_widget.show_status("Open a database in QChess to explore matching games.")
             return
 
-        def on_endgames_ready(resp: dict):
+        # Check active dock / tab flags
+        include_tree = hasattr(editor, "is_explorer_active") and editor.is_explorer_active()
+        include_continuations = hasattr(editor, "is_continuations_active") and editor.is_continuations_active()
+        include_endgames = hasattr(editor, "is_endgames_active") and editor.is_endgames_active()
+        include_games = hasattr(editor, "is_games_active") and editor.is_games_active()
+
+        # If none of the reference docks are active and not forced, nothing to query
+        if not (include_tree or include_continuations or include_endgames or include_games) and not force:
+            return
+
+        # If forced and all False, enable tree and games by default
+        if force and not (include_tree or include_continuations or include_endgames or include_games):
+            include_tree = True
+            include_games = True
+
+        query_tree = include_tree and (getattr(editor, "_loaded_tree_fen", None) != fen)
+        query_cont = include_continuations and (getattr(editor, "_loaded_cont_fen", None) != fen)
+        query_endg = include_endgames and (getattr(editor, "_loaded_endg_fen", None) != fen)
+        query_games = include_games and (getattr(editor, "_loaded_games_fen", None) != fen)
+
+        if not (query_tree or query_cont or query_endg or query_games):
+            return
+
+        # Continuations parameters
+        cont_depth = None
+        max_lines = None
+        min_games = None
+        min_pct = None
+        cw = getattr(editor, "continuations_widget", None)
+        if cw:
+            cont_depth = getattr(cw, "depth", 8)
+            max_lines = getattr(cw, "max_lines", 6)
+            min_games = getattr(cw, "min_games", 1)
+            min_pct = getattr(cw, "min_pct", 0.0)
+            if hasattr(cw, "spin_depth"):
+                cont_depth = cw.spin_depth.value()
+                max_lines = cw.spin_max_lines.value()
+                min_games = cw.spin_min_games.value()
+                min_pct = cw.spin_min_pct.value()
+            if query_cont and hasattr(cw, "lbl_source_badge"):
+                cw.lbl_source_badge.setText("⏳ Calculating...")
+
+        if options:
+            cont_depth = options.get("max_depth", cont_depth)
+            max_lines = options.get("max_lines", max_lines)
+            min_games = options.get("min_games", min_games)
+            min_pct = options.get("min_percentage", min_pct)
+
+        # Merge global filters
+        global_filters = dict(self.ref_filter_mgr.get_filter_dict())
+        if filters:
+            global_filters.update(filters)
+        active_filters = global_filters if global_filters else None
+
+        # Show loading only on widgets that need fresh data
+        if (query_tree or query_games) and hasattr(editor, "update_reference_header"):
+            editor.update_reference_header(is_loading=True)
+        if query_tree and hasattr(editor, "opxl"):
+            editor._opxl_query_start_time = time.time()
+        if query_cont and hasattr(editor, "continuations_widget"):
+            editor._cont_query_start_time = time.time()
+        if query_endg and hasattr(editor, "endgames_widget"):
+            editor.endgames_widget.show_loading("Querying endgame statistics...")
+        if query_games and hasattr(editor, "position_games_widget"):
+            editor.position_games_widget.show_loading("Querying matching games...")
+        editor._active_reference_fen = fen
+
+        def on_reference_ready(resp: dict):
             if editor not in self._editors:
                 return
+            if getattr(editor, "_active_reference_fen", None) != fen:
+                return
+            editor._opxl_query_start_time = None
+            editor._cont_query_start_time = None
+            if hasattr(editor, "statusBar"):
+                msg = editor.statusBar().currentMessage()
+                if msg.startswith("Opening Tree:") or msg.startswith("Continuations:"):
+                    editor.statusBar().clearMessage()
+
             if resp.get("status") == "ok":
                 data = resp.get("data", {})
-                editor.endgames_widget.set_report(data)
+                search_id = data.get("search_id")
+                total_games = data.get("total_games", 0)
+
+                # Update unified reference header
+                if hasattr(editor, "update_reference_header") and (query_tree or query_games or total_games > 0):
+                    editor.update_reference_header(total_games=total_games)
+
+                # 1. Opening Tree
+                if query_tree and "tree" in data and data["tree"] is not None and hasattr(editor, "opxl"):
+                    editor.opxl.set_tree_data(data["tree"])
+                    editor._loaded_tree_fen = fen
+
+                # 2. Continuations
+                if query_cont and "continuations" in data and data["continuations"] is not None and hasattr(editor, "continuations_widget"):
+                    cont_lines = data.get("continuations") or []
+                    editor.continuations_widget.set_report({
+                        "lines": cont_lines,
+                        "total_games_processed": total_games,
+                        "games_reaching_position": total_games,
+                        "source": "booster",
+                    })
+                    editor._loaded_cont_fen = fen
+
+                # 3. Endgames
+                if query_endg and "endgames" in data and data["endgames"] is not None and hasattr(editor, "endgames_widget"):
+                    editor.endgames_widget.set_report(data["endgames"])
+                    editor._loaded_endg_fen = fen
+
+                # 4. Matching Games Table Session
+                if query_games and hasattr(editor, "position_games_widget"):
+                    games_slice = data.get("games")
+                    editor.position_games_widget.set_search_session(
+                        search_id=search_id,
+                        total_count=total_games,
+                        filters=active_filters,
+                        initial_games=games_slice if include_games else None,
+                        owner="reference",
+                    )
+                    editor._loaded_games_fen = fen
             else:
-                err = resp.get("error", "Error calculating endgames")
-                editor.endgames_widget.show_status(f"Endgames error: {err}")
+                err = resp.get("error", "Error querying reference statistics")
+                if hasattr(editor, "update_reference_header"):
+                    editor.update_reference_header(message=f"⚠ {err}")
+                if query_tree and hasattr(editor, "opxl"):
+                    editor.opxl.show_status(f"Opening explorer: {err}")
+                if query_cont and hasattr(editor, "continuations_widget"):
+                    editor.continuations_widget.show_status(f"Continuations error: {err}")
+                if query_endg and hasattr(editor, "endgames_widget"):
+                    editor.endgames_widget.show_status(f"Endgames error: {err}")
+                if query_games and hasattr(editor, "position_games_widget"):
+                    editor.position_games_widget.show_status(f"Games error: {err}")
 
         try:
-            self.home.scid_client.endgames(
+            self.home.scid_client.reference(
                 fen=fen,
-                category=options.get("category"),
-                max_samples=options.get("max_samples", 20),
-                callback=on_endgames_ready,
+                include_tree=query_tree,
+                include_continuations=query_cont,
+                include_endgames=query_endg,
+                include_games=query_games,
+                page=0,
+                page_size=25,
+                filters=active_filters,
+                continuation_depth=cont_depth,
+                max_lines=max_lines,
+                min_games=min_games,
+                min_percentage=min_pct,
+                callback=on_reference_ready,
             )
         except Exception as e:
-            editor.endgames_widget.show_status(f"Endgames query error: {e}")
+            editor._opxl_query_start_time = None
+            editor._cont_query_start_time = None
+            if hasattr(editor, "opxl"):
+                editor.opxl.show_status(f"Reference query error: {e}")
 
     def _on_build_hot_index_requested(self, editor: Optional[ChessApp] = None):
-        """Open the Build Fast Indexes dialog pre-selecting .hot.idx."""
+        """Open the Build Fast Indexes dialog pre-selecting Search Booster (.boost.idx)."""
         if not self.home.scid_client.is_running() or not self.home._current_db_path:
             parent_window = editor if (editor and editor in self._editors) else self.home
             if hasattr(parent_window, "statusBar"):
@@ -414,9 +587,8 @@ class ApplicationController(QObject):
 
         parent_window = editor if (editor and editor in self._editors) else self.home
         dlg = BuildPosIndexDialog(self.home.scid_client, parent=parent_window)
-        dlg.chk_tree.setChecked(False)
-        dlg.chk_pos.setChecked(False)
-        dlg.chk_hot.setChecked(True)
+        if hasattr(dlg, "chk_booster"):
+            dlg.chk_booster.setChecked(True)
         if hasattr(dlg, "chk_feat"):
             dlg.chk_feat.setChecked(False)
         dlg.exec_()
@@ -432,9 +604,8 @@ class ApplicationController(QObject):
 
         parent_window = editor if (editor and editor in self._editors) else self.home
         dlg = BuildPosIndexDialog(self.home.scid_client, parent=parent_window)
-        dlg.chk_tree.setChecked(False)
-        dlg.chk_pos.setChecked(False)
-        dlg.chk_hot.setChecked(False)
+        if hasattr(dlg, "chk_booster"):
+            dlg.chk_booster.setChecked(False)
         if hasattr(dlg, "chk_feat"):
             dlg.chk_feat.setChecked(True)
         dlg.exec_()

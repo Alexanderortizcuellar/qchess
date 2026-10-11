@@ -12,12 +12,12 @@ import qtawesome as qta
 
 
 class BuildPosIndexDialog(QDialog):
-    """Unified Dialog for creating / rebuilding .tree.idx (Opening Tree Stats) and .pos.idx (Search Booster)."""
+    """Unified Dialog for creating / rebuilding .boost.idx (Search Booster) and .feat.idx (Endgame Taxonomy)."""
 
     def __init__(self, scid_client, default_ply: int = 24, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Build Fast Database Indexes (.pos.idx & .tree.idx)")
-        self.resize(540, 390)
+        self.setWindowTitle("Build Fast Database Indexes")
+        self.resize(560, 390)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.client = scid_client
         self.queue = []
@@ -30,9 +30,10 @@ class BuildPosIndexDialog(QDialog):
 
         # Connect streaming progress signals
         if self.client:
-            self.client.pos_index_progress.connect(self._on_pos_progress)
-            self.client.tree_index_progress.connect(self._on_tree_progress)
-            self.client.continuations_progress.connect(self._on_hot_progress)
+            self.client.booster_progress.connect(self._on_booster_progress)
+            self.client.pos_index_progress.connect(self._on_booster_progress)
+            if hasattr(self.client, "build_continuations_progress"):
+                self.client.build_continuations_progress.connect(self._on_hot_progress)
             self.client.endgame_index_progress.connect(self._on_feat_progress)
 
     def _init_ui(self, default_ply: int):
@@ -47,13 +48,13 @@ class BuildPosIndexDialog(QDialog):
         info_layout.setContentsMargins(12, 10, 12, 10)
         info_layout.setSpacing(4)
 
-        title_lbl = QLabel("⚡ <b>Companion Fast Indexes</b>")
+        title_lbl = QLabel("⚡ <b>Companion Fast Database Indexes</b>")
         title_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
         info_layout.addWidget(title_lbl)
 
         desc_lbl = QLabel(
-            "Companion fast binary indexes enable sub-millisecond opening explorer statistics, "
-            "endgame taxonomy distributions, and instant candidate game search acceleration."
+            "Companion binary indexes enable instant opening explorer statistics, "
+            "deep variation graphs, sub-second position searching, and 47-feature endgame classification."
         )
         desc_lbl.setWordWrap(True)
         desc_lbl.setStyleSheet("color: #a0a0a0; font-size: 11px;")
@@ -65,28 +66,45 @@ class BuildPosIndexDialog(QDialog):
         grp_targets = QGroupBox("Select Indexes to Build")
         grp_targets.setObjectName("grpTargets")
         box_targets = QVBoxLayout(grp_targets)
-        box_targets.setSpacing(6)
+        box_targets.setSpacing(8)
 
-        self.chk_tree = QCheckBox(
-            "🌲 Opening Tree Stats Index (.tree.idx) — Instant opening repertoire & move statistics"
+        self.chk_booster = QCheckBox(
+            "⚡ Search Booster (.boost.idx) — Fast position matching, opening explorer & dynamic search"
         )
-        self.chk_tree.setChecked(True)
-        self.chk_tree.setStyleSheet("font-weight: bold;")
-        box_targets.addWidget(self.chk_tree)
-
-        self.chk_pos = QCheckBox(
-            "⚡ Position Search Booster (.pos.idx) — Sub-millisecond position candidate searches"
-        )
-        self.chk_pos.setChecked(True)
-        self.chk_pos.setStyleSheet("font-weight: bold;")
-        box_targets.addWidget(self.chk_pos)
+        self.chk_booster.setChecked(True)
+        self.chk_booster.setStyleSheet("font-weight: bold;")
+        box_targets.addWidget(self.chk_booster)
 
         self.chk_hot = QCheckBox(
-            "📈 Common Continuations Graph (.hot.idx) — Sub-millisecond multi-move sequence analysis"
+            "📈 Common Continuations Graph (.hot.idx) — Precomputed instant tree & variation graph"
         )
         self.chk_hot.setChecked(True)
         self.chk_hot.setStyleSheet("font-weight: bold;")
+        self.chk_hot.toggled.connect(self._on_hot_toggled)
         box_targets.addWidget(self.chk_hot)
+
+        # Options specific to .hot.idx build
+        self.hot_options_frame = QFrame()
+        self.hot_options_frame.setObjectName("hotOptionsFrame")
+        hot_layout = QFormLayout(self.hot_options_frame)
+        hot_layout.setContentsMargins(24, 2, 8, 6)
+        hot_layout.setSpacing(6)
+
+        self.spin_depth = QSpinBox()
+        self.spin_depth.setRange(4, 60)
+        self.spin_depth.setValue(default_ply if default_ply else 24)
+        self.spin_depth.setSuffix(" plies")
+        self.spin_depth.setToolTip("Maximum search depth in half-moves (plies) to index (e.g. 24 plies = 12 full moves)")
+        hot_layout.addRow("Max Depth / Ply:", self.spin_depth)
+
+        self.spin_min_games = QSpinBox()
+        self.spin_min_games.setRange(1, 1000)
+        self.spin_min_games.setValue(1)
+        self.spin_min_games.setSuffix(" games")
+        self.spin_min_games.setToolTip("Minimum number of games reaching a position to be included in the graph")
+        hot_layout.addRow("Min Games Threshold:", self.spin_min_games)
+
+        box_targets.addWidget(self.hot_options_frame)
 
         self.chk_feat = QCheckBox(
             "♟ Endgame Feature Index (.feat.idx) — 47-type standardized endgame taxonomy"
@@ -95,26 +113,15 @@ class BuildPosIndexDialog(QDialog):
         self.chk_feat.setStyleSheet("font-weight: bold;")
         box_targets.addWidget(self.chk_feat)
 
+        # Backwards compatibility aliases for callers referencing chk_tree, chk_pos
+        self.chk_tree = self.chk_booster
+        self.chk_pos = self.chk_booster
+
         layout.addWidget(grp_targets)
 
         # Form options
         form = QFormLayout()
         form.setSpacing(8)
-
-        self.spin_depth = QSpinBox()
-        self.spin_depth.setRange(4, 100)
-        self.spin_depth.setValue(default_ply)
-        self.spin_depth.setSuffix(" plies (half-moves)")
-        self.spin_depth.setToolTip("Maximum depth into games to index positions (24 plies = 12 full moves)")
-        form.addRow("Indexing Depth:", self.spin_depth)
-
-        self.spin_min_games = QSpinBox()
-        self.spin_min_games.setRange(1, 100000)
-        self.spin_min_games.setValue(1)
-        self.spin_min_games.setSpecialValueText("1 (Include all positions)")
-        self.spin_min_games.setSuffix(" occurrences min")
-        self.spin_min_games.setToolTip("Filter out positions occurring fewer than this threshold (1 indexes all positions)")
-        form.addRow("Min Position Frequency:", self.spin_min_games)
 
         cpu_count = os.cpu_count() or 4
         self.spin_threads = QSpinBox()
@@ -198,26 +205,21 @@ class BuildPosIndexDialog(QDialog):
                     border: 1px solid #444;
                     border-radius: 4px;
                     padding: 4px 8px;
-                    min-width: 140px;
-                }
-                QSpinBox:focus {
-                    border-color: #4a90d9;
                 }
                 QProgressBar {
-                    border: 1px solid #3c3c3c;
+                    background-color: #2d2d2d;
+                    color: white;
+                    border: 1px solid #444;
                     border-radius: 4px;
                     text-align: center;
-                    height: 22px;
-                    font-weight: bold;
-                    background-color: #252526;
-                    color: #ffffff;
+                    height: 18px;
                 }
                 QProgressBar::chunk {
-                    background-color: #2e7d32;
+                    background-color: #3b82f6;
                     border-radius: 3px;
                 }
                 #btnBuild {
-                    background-color: #2e7d32;
+                    background-color: #16a34a;
                     color: white;
                     font-weight: bold;
                     border: none;
@@ -225,45 +227,45 @@ class BuildPosIndexDialog(QDialog):
                     padding: 7px 18px;
                 }
                 #btnBuild:hover {
-                    background-color: #388e3c;
+                    background-color: #15803d;
                 }
                 #btnBuild:disabled {
-                    background-color: #444444;
-                    color: #888888;
+                    background-color: #333333;
+                    color: #666666;
                 }
                 #btnClose {
                     background-color: #333333;
                     color: #cccccc;
-                    border: 1px solid #555555;
+                    border: 1px solid #444;
                     border-radius: 4px;
                     padding: 7px 16px;
                 }
                 #btnClose:hover {
-                    background-color: #3d3d3d;
+                    background-color: #444444;
                 }
             """)
         else:
-            self.lbl_progress.setStyleSheet("color: #475569; font-size: 11px;")
+            self.lbl_progress.setStyleSheet("color: #64748b; font-size: 11px;")
             self.setStyleSheet("""
                 QDialog {
                     background-color: #ffffff;
-                    color: #0f172a;
+                    color: #1e293b;
                 }
                 QLabel {
-                    color: #0f172a;
+                    color: #1e293b;
                 }
                 #infoFrame {
-                    background-color: #eff6ff;
-                    border: 1px solid #bfdbfe;
+                    background-color: #f8fafc;
+                    border: 1px solid #e2e8f0;
                     border-radius: 6px;
                 }
                 QGroupBox {
                     font-weight: bold;
-                    border: 1px solid #cbd5e1;
+                    border: 1px solid #e2e8f0;
                     border-radius: 6px;
                     margin-top: 8px;
                     padding-top: 10px;
-                    color: #0f172a;
+                    color: #1e293b;
                 }
                 QGroupBox::title {
                     subcontrol-origin: margin;
@@ -271,30 +273,25 @@ class BuildPosIndexDialog(QDialog):
                     padding: 0 4px;
                 }
                 QCheckBox {
-                    color: #0f172a;
+                    color: #1e293b;
                 }
                 QSpinBox {
                     background-color: #ffffff;
-                    color: #0f172a;
+                    color: #1e293b;
                     border: 1px solid #cbd5e1;
                     border-radius: 4px;
                     padding: 4px 8px;
-                    min-width: 140px;
-                }
-                QSpinBox:focus {
-                    border-color: #2563eb;
                 }
                 QProgressBar {
+                    background-color: #f1f5f9;
+                    color: #1e293b;
                     border: 1px solid #cbd5e1;
                     border-radius: 4px;
                     text-align: center;
-                    height: 22px;
-                    font-weight: bold;
-                    background-color: #f1f5f9;
-                    color: #0f172a;
+                    height: 18px;
                 }
                 QProgressBar::chunk {
-                    background-color: #16a34a;
+                    background-color: #2563eb;
                     border-radius: 3px;
                 }
                 #btnBuild {
@@ -324,19 +321,21 @@ class BuildPosIndexDialog(QDialog):
                 }
             """)
 
+    def _on_hot_toggled(self, checked: bool):
+        self.hot_options_frame.setEnabled(checked)
+        self.hot_options_frame.setVisible(checked)
+
     def start_build(self):
         if not self.client or not self.client.is_running():
             QMessageBox.warning(self, "Offline", "scid-mgr backend is not connected.")
             return
 
         self.queue = []
-        if self.chk_tree.isChecked():
-            self.queue.append("build_tree")
-        if self.chk_pos.isChecked():
-            self.queue.append("build_pos_index")
+        if self.chk_booster.isChecked():
+            self.queue.append("build_booster")
         if self.chk_hot.isChecked():
             self.queue.append("build_continuations")
-        if hasattr(self, "chk_feat") and self.chk_feat.isChecked():
+        if self.chk_feat.isChecked():
             self.queue.append("build_endgames")
 
         if not self.queue:
@@ -344,14 +343,11 @@ class BuildPosIndexDialog(QDialog):
             return
 
         self.btn_build.setEnabled(False)
-        self.chk_tree.setEnabled(False)
-        self.chk_pos.setEnabled(False)
+        self.chk_booster.setEnabled(False)
         self.chk_hot.setEnabled(False)
-        if hasattr(self, "chk_feat"):
-            self.chk_feat.setEnabled(False)
-        self.spin_depth.setEnabled(False)
-        self.spin_min_games.setEnabled(False)
+        self.chk_feat.setEnabled(False)
         self.spin_threads.setEnabled(False)
+        self.hot_options_frame.setEnabled(False)
         self.results = {}
         self.progress_bar.setValue(0)
         self._run_next_task()
@@ -363,22 +359,20 @@ class BuildPosIndexDialog(QDialog):
 
         self.current_task = self.queue.pop(0)
         threads = self.spin_threads.value()
-        depth = self.spin_depth.value()
-        min_g = self.spin_min_games.value()
         self.task_start_time = time.time()
 
-        if self.current_task == "build_tree":
-            task_label = "Opening Tree (.tree.idx)"
-        elif self.current_task == "build_pos_index":
-            task_label = "Position Booster (.pos.idx)"
-        elif self.current_task == "build_endgames":
-            task_label = "Endgame Feature Index (.feat.idx)"
+        if self.current_task == "build_booster":
+            task_label = "Search Booster (.boost.idx)"
+        elif self.current_task == "build_continuations":
+            max_ply = self.spin_depth.value()
+            min_games = self.spin_min_games.value()
+            task_label = f"Continuations Graph (.hot.idx, max_ply={max_ply}, min_games={min_games})"
         else:
-            task_label = "Continuations Graph (.hot.idx)"
+            task_label = "Endgame Feature Index (.feat.idx)"
 
         self.progress_bar.setValue(0)
         self.lbl_progress.setText(
-            f"Starting {task_label} build (depth: {depth} plies, {threads} threads)..."
+            f"Starting {task_label} build ({threads} worker threads)..."
         )
 
         def on_complete(resp: dict):
@@ -392,41 +386,46 @@ class BuildPosIndexDialog(QDialog):
                 self._restore_controls()
                 QMessageBox.critical(self, "Index Build Failed", f"Failed to build {task_label}:\n{err}")
 
-        if self.current_task == "build_tree":
-            self.client.build_tree(max_ply=depth, min_games=min_g, threads=threads, callback=on_complete)
-        elif self.current_task == "build_pos_index":
-            self.client.build_pos_index(max_ply=depth, min_games=min_g, threads=threads, callback=on_complete)
+        if self.current_task == "build_booster":
+            self.client.build_booster(callback=on_complete)
+        elif self.current_task == "build_continuations":
+            max_ply = self.spin_depth.value()
+            min_games = self.spin_min_games.value()
+            self.client.build_continuations(
+                max_ply=max_ply,
+                min_games=min_games,
+                threads=threads,
+                callback=on_complete,
+            )
         elif self.current_task == "build_endgames":
             self.client.build_endgames(callback=on_complete)
-        else:
-            self.client.build_continuations(max_ply=depth, min_games=min_g, threads=threads, callback=on_complete)
 
     def _all_tasks_completed(self):
         self.progress_bar.setValue(100)
         summary_lines = []
         msg_lines = []
         for task, res in self.results.items():
-            if task == "build_tree":
-                name = "Opening Tree (.tree.idx)"
-                items_cnt = res.get("unique_positions", 0)
-                item_label = "positions"
-            elif task == "build_pos_index":
-                name = "Position Booster (.pos.idx)"
-                items_cnt = res.get("unique_positions", 0)
-                item_label = "positions"
-            elif task == "build_endgames":
+            if task == "build_booster":
+                name = "Search Booster (.boost.idx)"
+                items_cnt = res.get("total_plies", 0)
+                item_label = "plies"
+                games_cnt = res.get("games_indexed", 0)
+                extra = f" across {games_cnt:,} games"
+            elif task == "build_continuations":
+                name = "Continuations Graph (.hot.idx)"
+                items_cnt = res.get("total_nodes", res.get("node_count", res.get("nodes_indexed", 0)))
+                item_label = "nodes"
+                games_cnt = res.get("games_processed", res.get("db_game_count", res.get("total_games", 0)))
+                extra = f" across {games_cnt:,} games"
+            else:
                 name = "Endgame Feature Index (.feat.idx)"
                 items_cnt = res.get("total_games", 0)
                 item_label = "games"
-            else:
-                name = "Continuations Graph (.hot.idx)"
-                items_cnt = res.get("nodes", res.get("unique_positions", 0))
-                edges_cnt = res.get("edges", 0)
-                item_label = f"nodes ({edges_cnt:,} edges)" if edges_cnt > 0 else "nodes"
+                extra = ""
 
-            elapsed_ms = res.get("elapsed_ms", 0.0)
-            summary_lines.append(f"✅ {name}: {items_cnt:,} {item_label} in {elapsed_ms:,.0f} ms")
-            msg_lines.append(f"• {name}:\n   - Entries: {items_cnt:,} {item_label}\n   - Elapsed Time: {elapsed_ms / 1000.0:.2f} s")
+            elapsed_ms = res.get("elapsed_ms", res.get("total_duration_ms", 0.0))
+            summary_lines.append(f"✅ {name}: {items_cnt:,} {item_label}{extra} in {elapsed_ms:,.0f} ms")
+            msg_lines.append(f"• {name}:\n   - Entries: {items_cnt:,} {item_label}{extra}\n   - Elapsed Time: {elapsed_ms / 1000.0:.2f} s")
 
         self.lbl_progress.setText(" | ".join(summary_lines))
         self._restore_controls()
@@ -439,76 +438,94 @@ class BuildPosIndexDialog(QDialog):
 
     def _restore_controls(self):
         self.btn_build.setEnabled(True)
-        self.chk_tree.setEnabled(True)
-        self.chk_pos.setEnabled(True)
+        self.chk_booster.setEnabled(True)
         self.chk_hot.setEnabled(True)
-        if hasattr(self, "chk_feat"):
-            self.chk_feat.setEnabled(True)
-        self.spin_depth.setEnabled(True)
-        self.spin_min_games.setEnabled(True)
+        self.chk_feat.setEnabled(True)
         self.spin_threads.setEnabled(True)
+        self.hot_options_frame.setEnabled(self.chk_hot.isChecked())
 
-    def _on_pos_progress(self, prog_data: dict):
-        if self.current_task == "build_pos_index":
-            self._handle_progress_data(prog_data, "Position Booster (.pos.idx)")
+    def _on_booster_progress(self, prog_data: dict):
+        if self.current_task == "build_booster":
+            scanned = prog_data.get("scanned", 0)
+            total = prog_data.get("total", 0)
+            plies = prog_data.get("plies", 0)
 
-    def _on_tree_progress(self, prog_data: dict):
-        if self.current_task == "build_tree":
-            self._handle_progress_data(prog_data, "Opening Tree (.tree.idx)")
+            if total > 0:
+                percent = (scanned / total) * 100.0
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = f"{total:,}"
+            else:
+                raw_pct = float(prog_data.get("percent", 0.0))
+                percent = raw_pct if 0 <= raw_pct <= 100 else 0.0
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = "..."
+
+            elapsed = time.time() - self.task_start_time
+            speed_str = f" (~{scanned / elapsed:,.0f} games/s)" if elapsed > 0.3 and scanned > 0 else ""
+            self.lbl_progress.setText(
+                f"[Search Booster (.boost.idx)] Indexed: {scanned:,} / {total_str} games ({percent:.1f}%){speed_str} | Plies: {plies:,}"
+            )
 
     def _on_hot_progress(self, prog_data: dict):
         if self.current_task == "build_continuations":
             scanned = prog_data.get("scanned", 0)
             total = prog_data.get("total", 0)
             nodes = prog_data.get("nodes", 0)
-            edges = prog_data.get("edges", 0)
-            percent = float(prog_data.get("percent", 0.0))
 
-            self.progress_bar.setValue(min(100, int(percent)))
+            if total > 0:
+                percent = (scanned / total) * 100.0
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = f"{total:,}"
+            else:
+                raw_pct = float(prog_data.get("percent", 0.0))
+                percent = raw_pct if 0 <= raw_pct <= 100 else 0.0
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = "..."
+
             elapsed = time.time() - self.task_start_time
             speed_str = f" (~{scanned / elapsed:,.0f} games/s)" if elapsed > 0.3 and scanned > 0 else ""
             self.lbl_progress.setText(
-                f"[Continuations Graph (.hot.idx)] Indexed: {scanned:,} / {total:,} games ({percent:.1f}%){speed_str} | Nodes: {nodes:,} | Edges: {edges:,}"
+                f"[Continuations Graph (.hot.idx)] Indexed: {scanned:,} / {total_str} games ({percent:.1f}%){speed_str}" +
+                (f" | Nodes: {nodes:,}" if nodes > 0 else "")
             )
 
     def _on_feat_progress(self, prog_data: dict):
         if self.current_task == "build_endgames":
             scanned = prog_data.get("scanned", 0)
             total = prog_data.get("total", 0)
-            percent = float(prog_data.get("percent", 0.0))
 
-            self.progress_bar.setValue(min(100, int(percent)))
+            if total > 0:
+                percent = (scanned / total) * 100.0
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = f"{total:,}"
+            else:
+                raw_pct = float(prog_data.get("percent", 0.0))
+                percent = raw_pct if 0 <= raw_pct <= 100 else 0.0
+                self.progress_bar.setValue(min(100, int(percent)))
+                total_str = "..."
+
             elapsed = time.time() - self.task_start_time
             speed_str = f" (~{scanned / elapsed:,.0f} games/s)" if elapsed > 0.3 and scanned > 0 else ""
             self.lbl_progress.setText(
-                f"[Endgame Feature Index (.feat.idx)] Indexed: {scanned:,} / {total:,} games ({percent:.1f}%){speed_str}"
+                f"[Endgame Feature Index (.feat.idx)] Indexed: {scanned:,} / {total_str} games ({percent:.1f}%){speed_str}"
             )
-
-    def _handle_progress_data(self, prog_data: dict, task_name: str):
-        scanned = prog_data.get("scanned", 0)
-        total = prog_data.get("total", 0)
-        positions = prog_data.get("positions", 0)
-        percent = float(prog_data.get("percent", 0.0))
-
-        self.progress_bar.setValue(min(100, int(percent)))
-        elapsed = time.time() - self.task_start_time
-        speed_str = f" (~{scanned / elapsed:,.0f} games/s)" if elapsed > 0.3 and scanned > 0 else ""
-        self.lbl_progress.setText(
-            f"[{task_name}] Indexed: {scanned:,} / {total:,} games ({percent:.1f}%){speed_str} | Positions: {positions:,}"
-        )
 
     def closeEvent(self, event):
         if self.client:
             try:
-                self.client.pos_index_progress.disconnect(self._on_pos_progress)
+                self.client.booster_progress.disconnect(self._on_booster_progress)
             except Exception:
                 pass
             try:
-                self.client.tree_index_progress.disconnect(self._on_tree_progress)
+                self.client.pos_index_progress.disconnect(self._on_booster_progress)
             except Exception:
                 pass
             try:
-                self.client.continuations_progress.disconnect(self._on_hot_progress)
+                if hasattr(self.client, "build_continuations_progress"):
+                    self.client.build_continuations_progress.disconnect(self._on_hot_progress)
             except Exception:
                 pass
             try:

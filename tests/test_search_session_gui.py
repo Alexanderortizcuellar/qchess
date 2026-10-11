@@ -89,6 +89,32 @@ def test_scid_client_search_methods():
     client.search_material(mat_filter)
     client.send_request.assert_called_with("search_material", mat_filter, None)
 
+    # Test booster methods
+    client.build_booster()
+    client.send_request.assert_called_with("build_booster", {}, None)
+
+    client.booster_status()
+    client.send_request.assert_called_with("booster_status", {}, None)
+
+    # Test unified opening_tree with continuations
+    client.opening_tree(
+        fen="rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        include_continuations=True,
+        continuation_depth=8,
+        max_lines=10,
+        min_games=5,
+        min_percentage=1.0,
+    )
+    client.send_request.assert_called_with("opening_tree", {
+        "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+        "include_sample_games": True,
+        "include_continuations": True,
+        "continuation_depth": 8,
+        "max_lines": 10,
+        "min_games": 5,
+        "min_percentage": 1.0,
+    }, None)
+
 
 def test_advanced_search_dialog_category_isolation(qapp):
     """Verify AdvancedSearchDialog isolates tabs without contaminating FEN into header searches."""
@@ -163,6 +189,20 @@ def test_game_list_table_columns_and_match_metadata(qapp):
     assert game_item.get("matching_plies") == [11, 23, 45]
     assert game_item.get("match_count") == 3
 
+    # Test handling response with null games (e.g. from reference endpoint with include_games=False)
+    null_resp = {
+        "status": "ok",
+        "data": {
+            "search_id": "ref_99",
+            "total_games": 10,
+            "games": None,
+        }
+    }
+    # Must not raise TypeError or corrupt model
+    model.on_backend_response(null_resp)
+    assert model.total_count == 1
+    assert model.rowCount() == 1
+
 
 def test_game_preview_widget_stepping(qapp):
     """Test GamePreviewWidget auto-jump and stepping through matching plies."""
@@ -202,3 +242,74 @@ def test_game_preview_widget_stepping(qapp):
     widget.go_prev_match()
     assert widget.current_match_idx == 0
     assert widget.move_manager.get_current_ply() == 5
+
+
+def test_home_window_booster_badge_and_banner(qapp):
+    """Verify HomeWindow updates Search Booster badge and warning banner."""
+    from gui.home_window import HomeWindow
+
+    home = HomeWindow()
+
+    # Case 1: Missing booster
+    home.update_booster_badge("missing", 0)
+    assert not home.btn_booster_badge.isHidden()
+    assert "No Search Booster" in home.btn_booster_badge.text()
+    assert not home.booster_warning_banner.isHidden()
+
+    # Case 2: Outdated booster
+    home.update_booster_badge("outdated", 1000)
+    assert not home.btn_booster_badge.isHidden()
+    assert "Booster Outdated" in home.btn_booster_badge.text()
+    assert not home.booster_warning_banner.isHidden()
+
+    # Case 3: Valid active booster
+    home.update_booster_badge("valid", 450000)
+    assert not home.btn_booster_badge.isHidden()
+    assert "Booster Active" in home.btn_booster_badge.text()
+    assert "450,000" in home.btn_booster_badge.text()
+    assert home.booster_warning_banner.isHidden()
+
+
+def test_game_preview_widget_dimensions(qapp):
+    """Verify GamePreviewWidget size hints and minimum board dimensions."""
+    widget = GamePreviewWidget()
+    assert widget.sizeHint().width() >= 400
+    assert widget.minimumSizeHint().width() >= 320
+    assert widget.chessboard.minimumWidth() >= 200
+    assert widget.chessboard.minimumHeight() >= 200
+
+
+def test_home_window_preview_dock_visibility_persistence(qapp):
+    """Verify preview dock visibility and width persistence in QSettings."""
+    from PyQt5.QtCore import QSettings
+    from gui.home_window import HomeWindow
+
+    settings = QSettings("QChessApp", "WindowState")
+    settings.setValue("preview_dock_visible", True)
+    settings.setValue("preview_dock_width", 450)
+
+    home = HomeWindow()
+    home.show()
+    home.stack.setCurrentIndex(1)
+    home._restore_preview_dock_visibility()
+
+    assert not home._preview_dock.isHidden()
+    assert home._preview_dock.minimumWidth() >= 320
+
+    # Test navigating home does not overwrite preview_dock_visible
+    home._go_home()
+    assert home.stack.currentIndex() == 0
+    val = settings.value("preview_dock_visible")
+    is_vis = (val.lower() == "true") if isinstance(val, str) else bool(val)
+    assert is_vis is True
+
+    # Test closing does not falsely overwrite visibility to False
+    home.stack.setCurrentIndex(1)
+    home._restore_preview_dock_visibility()
+    assert not home._preview_dock.isHidden()
+    home.close()
+    val = settings.value("preview_dock_visible")
+    is_vis = (val.lower() == "true") if isinstance(val, str) else bool(val)
+    assert is_vis is True
+
+

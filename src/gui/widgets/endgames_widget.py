@@ -132,10 +132,11 @@ class EndgamesWidget(QtWidgets.QWidget):
         self.current_fen: Optional[str] = None
         self.last_queried_fen: Optional[str] = None
         self.current_report: Optional[dict] = None
-        self.is_dark = True
+        self.is_dark = QtCore.QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
         self._features_data: List[dict] = []
 
         self.init_ui()
+        self.set_theme(self.is_dark)
 
     def init_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -162,45 +163,9 @@ class EndgamesWidget(QtWidgets.QWidget):
         self.txt_filter.textChanged.connect(self._on_search_text_changed)
         c_layout.addWidget(self.txt_filter, stretch=2)
 
-        # Auto-query
-        self.chk_auto = QtWidgets.QCheckBox("Auto", self)
-        self.chk_auto.setChecked(True)
-        self.chk_auto.setToolTip("Automatically compute endgame distribution on position change")
-        c_layout.addWidget(self.chk_auto)
-
-        # Query Button
-        self.btn_query = QtWidgets.QPushButton("▶ Query", self)
-        self.btn_query.setToolTip("Query endgame statistics for current position")
-        self.btn_query.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_query.clicked.connect(self.trigger_query)
-        c_layout.addWidget(self.btn_query)
-
         layout.addWidget(self.controls_frame)
 
-        # 2. Summary Status Frame
-        self.summary_frame = QtWidgets.QFrame(self)
-        self.summary_frame.setObjectName("EndgamesSummaryFrame")
-        s_layout = QtWidgets.QHBoxLayout(self.summary_frame)
-        s_layout.setContentsMargins(6, 3, 6, 3)
-        s_layout.setSpacing(10)
-
-        self.lbl_pos_games = QtWidgets.QLabel("Position Games: -", self)
-        self.lbl_pos_games.setStyleSheet("font-weight: bold; font-size: 11px;")
-        s_layout.addWidget(self.lbl_pos_games)
-
-        self.lbl_total_db = QtWidgets.QLabel("Total DB: -", self)
-        self.lbl_total_db.setStyleSheet("font-size: 11px; color: #888;")
-        s_layout.addWidget(self.lbl_total_db)
-
-        s_layout.addStretch()
-
-        self.lbl_status = QtWidgets.QLabel("⚡ Ready", self)
-        self.lbl_status.setStyleSheet("font-weight: 600; font-size: 11px; color: #2e7d32;")
-        s_layout.addWidget(self.lbl_status)
-
-        layout.addWidget(self.summary_frame)
-
-        # 3. Main Endgames Tree / Table (Optimized space without GBR column)
+        # 2. Main Endgames Tree / Table (Optimized space without GBR column)
         self.table = QtWidgets.QTreeWidget(self)
         self.table.setColumnCount(3)
         self.table.setHeaderLabels(["Endgame Classification", "Games (%)", "Score (W / D / B)"])
@@ -210,7 +175,7 @@ class EndgamesWidget(QtWidgets.QWidget):
         self.table.header().resizeSection(2, 140)
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.table.setAlternatingRowColors(True)
+        self.table.setAlternatingRowColors(False)
         self.table.setRootIsDecorated(True)
         self.table.setAnimated(True)
 
@@ -232,7 +197,6 @@ class EndgamesWidget(QtWidgets.QWidget):
     def set_theme(self, is_dark: bool):
         self.is_dark = is_dark
         bg = "#1e1e1e" if is_dark else "#ffffff"
-        alt_bg = "#252526" if is_dark else "#f8fafc"
         text_color = "#d4d4d4" if is_dark else "#0f172a"
         panel_bg = "#2d2d2d" if is_dark else "#f1f5f9"
         header_bg = "#141312" if is_dark else "#e2e8f0"
@@ -242,14 +206,13 @@ class EndgamesWidget(QtWidgets.QWidget):
         sel_color = "#ffffff" if is_dark else "#1e3a8a"
 
         self.setStyleSheet(f"""
-            QFrame#EndgamesControlsFrame, QFrame#EndgamesSummaryFrame {{
+            QFrame#EndgamesControlsFrame {{
                 background-color: {panel_bg};
                 border: 1px solid {border_color};
                 border-radius: 4px;
             }}
             QTreeWidget {{
                 background-color: {bg};
-                alternate-background-color: {alt_bg};
                 color: {text_color};
                 border: 1px solid {border_color};
                 border-radius: 4px;
@@ -285,14 +248,10 @@ class EndgamesWidget(QtWidgets.QWidget):
                     fw.set_theme(is_dark)
 
     def show_status(self, message: str):
-        self.lbl_status.setText("ℹ Info")
-        self.lbl_status.setStyleSheet("font-weight: 600; font-size: 11px; color: #888;")
         self.status_lbl.setText(message)
         self.status_lbl.show()
 
     def show_loading(self, message: str = "Querying endgame statistics..."):
-        self.lbl_status.setText("⏳ Querying...")
-        self.lbl_status.setStyleSheet("font-weight: 600; font-size: 11px; color: #e65100;")
         self.status_lbl.setText(message)
         self.status_lbl.show()
 
@@ -310,8 +269,6 @@ class EndgamesWidget(QtWidgets.QWidget):
 
     def send_fen(self, fen: str, force: bool = False):
         self.current_fen = fen
-        if not self.chk_auto.isChecked() and not force:
-            return
         if not force and self.last_queried_fen == fen:
             return
         self.trigger_query(force=force)
@@ -351,18 +308,6 @@ class EndgamesWidget(QtWidgets.QWidget):
         """Populate the widget with EndgamePopularityReport from scid-mgr."""
         self.current_report = data
         self.status_lbl.hide()
-        self.lbl_status.setText("⚡ Ready")
-        self.lbl_status.setStyleSheet("font-weight: 600; font-size: 11px; color: #2e7d32;")
-
-        total_db = data.get("total_db_games", 0)
-        pos_games = data.get("games_reaching_position", total_db)
-        is_pos_filtered = data.get("position_filtered", False)
-
-        if is_pos_filtered:
-            self.lbl_pos_games.setText(f"Position Games: {pos_games:,}")
-        else:
-            self.lbl_pos_games.setText(f"Total Games: {pos_games:,}")
-        self.lbl_total_db.setText(f"Database: {total_db:,}")
 
         categories = data.get("categories", [])
         features = data.get("features", [])

@@ -110,14 +110,14 @@ QTabBar {
 QTabBar::tab {
     background: #21201d;
     color: #8b8987;
-    padding: 6px 14px;
-    min-height: 20px;
-    border-top: 2px solid transparent;
+    padding: 2px 10px;
+    min-height: 14px;
+    border-top: 1px solid transparent;
     border-bottom: 2px solid transparent;
-    border-radius: 4px;
-    margin-right: 3px;
-    margin-top: 2px;
-    margin-bottom: 2px;
+    border-radius: 3px;
+    margin-right: 2px;
+    margin-top: 1px;
+    margin-bottom: 1px;
 }
 
 QTabBar::tab:hover {
@@ -203,13 +203,15 @@ QTableView, QTableWidget, QTreeView, QTreeWidget {
     gridline-color: #383531;
     border: 1px solid #3d3a36;
     border-radius: 4px;
-    selection-background-color: #b86f1b;
+    selection-background-color: #1e3a5f;
     selection-color: #ffffff;
     outline: none;
 }
 
 QTableView::item, QTableWidget::item, QTreeView::item, QTreeWidget::item {
     padding: 3px 6px;
+    outline: none;
+    border: none;
 }
 
 QTableView::item:hover, QTableWidget::item:hover, QTreeView::item:hover, QTreeWidget::item:hover {
@@ -217,8 +219,22 @@ QTableView::item:hover, QTableWidget::item:hover, QTreeView::item:hover, QTreeWi
 }
 
 QTableView::item:selected, QTableWidget::item:selected, QTreeView::item:selected, QTreeWidget::item:selected {
-    background-color: #b86f1b;
+    background-color: #1e3a5f;
     color: #ffffff;
+    outline: none;
+    border: none;
+}
+
+QTableView::item:focus, QTableWidget::item:focus, QTreeView::item:focus, QTreeWidget::item:focus {
+    outline: none;
+    border: none;
+}
+
+QTableView::item:selected:focus, QTableWidget::item:selected:focus, QTreeView::item:selected:focus, QTreeWidget::item:selected:focus {
+    background-color: #1e3a5f;
+    color: #ffffff;
+    outline: none;
+    border: none;
 }
 
 QHeaderView {

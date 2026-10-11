@@ -267,14 +267,25 @@ class GameListTableModel(QAbstractTableModel):
         if data.get("status") != "ok":
             return
         resp_data = data.get("data", {})
-        if "games" not in resp_data:
+        if not isinstance(resp_data, dict):
+            return
+
+        games = resp_data.get("games")
+        if games is None or not isinstance(games, list):
+            return
+
+        resp_search_id = resp_data.get("search_id")
+        # Ignore reference explorer sessions (e.g. ref_1) to avoid contaminating main database table
+        if resp_search_id and str(resp_search_id).startswith("ref_") and (not self.search_id or not str(self.search_id).startswith("ref_")):
+            return
+
+        if self.search_id and resp_search_id and self.search_id != resp_search_id:
             return
 
         page = resp_data.get("page", 0)
-        total = resp_data.get("total", 0)
-        games = resp_data.get("games", [])
-        if "search_id" in resp_data:
-            self.search_id = resp_data.get("search_id")
+        total = resp_data.get("total", self.total_count)
+        if resp_search_id:
+            self.search_id = resp_search_id
 
         if page in self.in_flight_pages:
             self.in_flight_pages.remove(page)
@@ -302,7 +313,7 @@ class GameListTableModel(QAbstractTableModel):
                 bottom_right = self.index(end_row, len(self.HEADERS) - 1)
                 self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole, Qt.ForegroundRole])
 
-        loaded_count = sum(len(c) for c in self.cached_chunks.values())
+        loaded_count = sum(len(c) for c in self.cached_chunks.values() if isinstance(c, list))
         self.stats_updated.emit(self.total_count, loaded_count)
 
     def set_game_deleted_status(self, row: int, deleted: bool):
@@ -314,6 +325,14 @@ class GameListTableModel(QAbstractTableModel):
             top_left = self.index(row, 0)
             bottom_right = self.index(row, len(self.HEADERS) - 1)
             self.dataChanged.emit(top_left, bottom_right, [Qt.DisplayRole, Qt.ForegroundRole])
+
+
+class NoFocusDelegate(QtWidgets.QStyledItemDelegate):
+    """Delegate that suppresses the dotted cell focus rectangle on selection."""
+    def paint(self, painter, option, index):
+        opt = QtWidgets.QStyleOptionViewItem(option)
+        opt.state &= ~QtWidgets.QStyle.State_HasFocus
+        super().paint(painter, opt, index)
 
 
 class GameListTableWidget(QtWidgets.QWidget):
@@ -334,6 +353,7 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.filter_edit = QtWidgets.QLineEdit(self)
         self.filter_edit.setPlaceholderText("Quick filter games by player or text (Press Enter)...")
 
+        self.is_dark = QtCore.QSettings("QChessApp", "Theme").value("theme", "dark") == "dark"
         self.table = QtWidgets.QTableView(self)
         self.table.setFont(QtGui.QFont("Segoe UI", 9))
         self.table.verticalHeader().setDefaultSectionSize(22)
@@ -341,7 +361,10 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(False)
         self.table.setSortingEnabled(True)
+        self.table.setItemDelegate(NoFocusDelegate(self.table))
 
         # Table row context menu
         self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
@@ -374,6 +397,59 @@ class GameListTableWidget(QtWidgets.QWidget):
         self.filter_edit.returnPressed.connect(self._on_quick_filter_applied)
         self.table.doubleClicked.connect(self._on_double_clicked)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+        self.set_theme(self.is_dark)
+
+    def set_theme(self, is_dark: bool):
+        self.is_dark = is_dark
+        bg = "#262421" if is_dark else "#ffffff"
+        text_color = "#bababa" if is_dark else "#0f172a"
+        header_bg = "#141312" if is_dark else "#e2e8f0"
+        header_text = "#f8fafc" if is_dark else "#0f172a"
+        border_r = "#383531" if is_dark else "#cbd5e1"
+        sel_bg = "#1e3a5f" if is_dark else "#2563eb"
+        sel_color = "#ffffff"
+
+        self.table.setStyleSheet(f"""
+            QTableView {{
+                background-color: {bg};
+                color: {text_color};
+                border: none;
+                font-size: 11px;
+                selection-background-color: {sel_bg};
+                selection-color: {sel_color};
+                outline: none;
+            }}
+            QTableView::item {{
+                outline: none;
+                border: none;
+            }}
+            QTableView::item:selected {{
+                background-color: {sel_bg};
+                color: {sel_color};
+                outline: none;
+                border: none;
+            }}
+            QTableView::item:focus {{
+                outline: none;
+                border: none;
+            }}
+            QTableView::item:selected:focus {{
+                background-color: {sel_bg};
+                color: {sel_color};
+                outline: none;
+                border: none;
+            }}
+            QHeaderView::section {{
+                background-color: {header_bg};
+                color: {header_text};
+                border: none;
+                border-right: 1px solid {border_r};
+                border-bottom: 1px solid {border_r};
+                padding: 4px 6px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+        """)
 
     def _on_stats_updated(self, total_count: int, loaded_count: int):
         has_filter = self.model.has_active_filter()
