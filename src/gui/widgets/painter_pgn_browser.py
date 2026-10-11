@@ -1016,7 +1016,7 @@ class QPainterPGNBrowser(QWidget):
 
         actions = [
             ("Edit Comment...", self.on_add_comment, "fa5s.comment-alt"),
-            ("Tiempo Jugada...", self.on_edit_clk, "fa5s.clock"),
+            ("Edit Move Time...", self.on_edit_clk, "fa5s.clock"),
             (None, None, None),  # Separator
             ("Promote to Main Line", self.on_promote_to_main, "fa5s.arrow-up"),
             ("Promote Move", self.on_promote, "fa5s.chevron-up"),

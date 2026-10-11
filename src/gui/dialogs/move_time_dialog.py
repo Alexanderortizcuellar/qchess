@@ -19,7 +19,7 @@ class MoveTimeDialog(QDialog):
 
     def __init__(self, parent=None, current_clk: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Tiempo Jugada")
+        self.setWindowTitle("Move Time")
         self.resize(350, 230)
         self.result_clk = current_clk.strip()
 
@@ -49,7 +49,7 @@ class MoveTimeDialog(QDialog):
         layout.setSpacing(10)
 
         # Time spinboxes group
-        group = QGroupBox("Tiempo Restante (Reloj)")
+        group = QGroupBox("Remaining Time (Clock)")
         group_layout = QHBoxLayout(group)
         group_layout.setSpacing(6)
 
@@ -75,9 +75,9 @@ class MoveTimeDialog(QDialog):
 
         # Text input / preview
         text_layout = QHBoxLayout()
-        text_layout.addWidget(QLabel("Formato PGN:"))
+        text_layout.addWidget(QLabel("PGN Format:"))
         self.line_edit = QLineEdit()
-        self.line_edit.setPlaceholderText("e.g. 1:30:00 o 0:05:00")
+        self.line_edit.setPlaceholderText("e.g. 1:30:00 or 0:05:00")
         text_layout.addWidget(self.line_edit)
         layout.addLayout(text_layout)
 
@@ -106,7 +106,7 @@ class MoveTimeDialog(QDialog):
 
         # Dialog Buttons
         btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_clear = btn_box.addButton("Borrar Tiempo", QDialogButtonBox.ActionRole)
+        btn_clear = btn_box.addButton("Clear Time", QDialogButtonBox.ActionRole)
         btn_clear.setIcon(qta.icon("fa5s.trash-alt", color="#f87171"))
         btn_clear.clicked.connect(self._on_clear)
 
